@@ -1,0 +1,19 @@
+{
+  "model_name": "savlg_cbm",
+  "implementation_status": "planned_not_yet_ported",
+  "dataset": "cifar100",
+  "concept_set": "concept_files/cifar100_filtered.txt",
+  "backbone": "clip_RN50",
+  "use_clip_penultimate": true,
+  "annotation_dir": "./annotations",
+  "save_dir": "saved_models/cifar100",
+  "device": "cuda",
+  "num_workers": 6,
+  "mask_h": 7,
+  "mask_w": 7,
+  "cbl_epochs": 10,
+  "cbl_batch_size": 32,
+  "saga_lam": 0.0007,
+  "saga_n_iters": 2000,
+  "seed": 28527
+}
