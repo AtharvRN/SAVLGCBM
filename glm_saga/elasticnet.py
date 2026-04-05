@@ -34,6 +34,15 @@ def get_device(module):
         return module.device
     return next(module.parameters()).device
 
+
+def _resolve_verbose_every(verbose, default_every=50):
+    if verbose is None or verbose is False:
+        return None
+    if isinstance(verbose, bool):
+        return default_every
+    verbose = int(verbose)
+    return verbose if verbose > 0 else None
+
 ####### 
 # Solver assumes standardized input
 class IndexedTensorDataset(TensorDataset): 
@@ -176,13 +185,14 @@ def elastic_loss_and_acc_loader(linear, loader, lam, alpha, preprocess=None, fam
 # Train an elastic GLM with proximal gradient as a baseline
 def train(linear, X, y, lr, niters, lam, alpha, group=True, verbose=None): 
     weight, bias = list(linear.parameters())
+    verbose_every = _resolve_verbose_every(verbose)
 
     opt = SGD(linear.parameters(), lr=lr)
     for i in range(niters): 
         with ch.enable_grad():
             out = linear(X)
             loss = F.cross_entropy(out,y, reduction='mean') + 0.5 * lam * (1 - alpha) * (weight**2).sum()
-            if verbose and (i % verbose) == 0: 
+            if verbose_every is not None and (i % verbose_every) == 0: 
                 print(loss.item())
 
             # gradient step
@@ -199,6 +209,7 @@ def train(linear, X, y, lr, niters, lam, alpha, group=True, verbose=None):
 # Train an elastic GLM with stochastic proximal gradient as an even more inaccurate baseline
 def train_spg(linear, loader, max_lr, nepochs, lam, alpha, preprocess=None, min_lr=1e-4, group=True, verbose=None): 
     weight, bias = list(linear.parameters())
+    verbose_every = _resolve_verbose_every(verbose)
 
     params = [weight,bias]
     proximal = [True, False]
@@ -243,7 +254,7 @@ def train_spg(linear, loader, max_lr, nepochs, lam, alpha, preprocess=None, min_
             weight.grad.zero_()
             bias.grad.zero_()
 
-        if verbose and (t % verbose) == 0: 
+        if verbose_every is not None and (t % verbose_every) == 0: 
             spg_obj = (total_loss/n_ex + lam * alpha * weight.norm(p=1)).item()
             nnz = (weight.abs() > 1e-5).sum().item()
             total = weight.numel()
@@ -262,8 +273,10 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
         logger = print
     with ch.no_grad(): 
         weight, bias = list(linear.parameters())
+        weight_device = weight.device
+        verbose_every = _resolve_verbose_every(verbose)
         if table_device is None: 
-            table_device = weight.device
+            table_device = weight_device
 
         # get total number of examples and initialize scalars 
         # for computing the gradients
@@ -278,15 +291,19 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                     break
                 n_classes = y.size(1)
 
+        eye = None
+        if family == 'multinomial':
+            eye = ch.eye(n_classes, device=weight_device)
+
         # Storage for scalar gradients and averages
         if state is None: 
             a_table = ch.zeros(n_ex, n_classes).to(table_device)
-            w_grad_avg = ch.zeros_like(weight).to(weight.device)
-            b_grad_avg = ch.zeros_like(bias).to(weight.device)
+            w_grad_avg = ch.zeros_like(weight).to(weight_device)
+            b_grad_avg = ch.zeros_like(bias).to(weight_device)
         else: 
             a_table = state["a_table"].to(table_device)
-            w_grad_avg = state["w_grad_avg"].to(weight.device)
-            b_grad_avg = state["b_grad_avg"].to(weight.device)
+            w_grad_avg = state["w_grad_avg"].to(weight_device)
+            b_grad_avg = state["b_grad_avg"].to(weight_device)
 
         obj_history = []
         obj_best = None
@@ -306,32 +323,33 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                     device = get_device(preprocess)
                     with ch.no_grad():
                         X = preprocess(X.to(device))
-                X = X.to(weight.device)
+                X = X.to(weight_device)
                 out = linear(X)
 
                 # split gradient on only the cross entropy term 
                 # for efficient storage of gradient information 
                 if family == 'multinomial': 
+                    y_device = y.to(weight_device)
                     if w is None: 
-                        loss = F.cross_entropy(out,y.to(weight.device), reduction='mean')
+                        loss = F.cross_entropy(out, y_device, reduction='mean')
                     else: 
-                        loss = F.cross_entropy(out,y.to(weight.device), reduction='none')
+                        loss = F.cross_entropy(out, y_device, reduction='none')
                         loss = (loss*w).mean()
-                    I = ch.eye(linear.weight.size(0))
-                    target = I[y].to(weight.device) # change to OHE
+                    target = eye[y_device] # change to OHE
 
                     # Calculate new scalar gradient 
-                    logits = F.softmax(linear(X), dim=-1)
+                    logits = F.softmax(out, dim=-1)
                 elif family == 'gaussian': 
+                    y_device = y.to(weight_device)
                     if w is None: 
-                        loss = 0.5*F.mse_loss(out,y.to(weight.device), reduction='mean')
+                        loss = 0.5*F.mse_loss(out, y_device, reduction='mean')
                     else: 
-                        loss = 0.5*F.mse_loss(out,y.to(weight.device), reduction='none')
+                        loss = 0.5*F.mse_loss(out, y_device, reduction='none')
                         loss = (loss*(w.unsqueeze(1))).mean()
-                    target = y
+                    target = y_device
 
                     # Calculate new scalar gradient 
-                    logits = linear(X)
+                    logits = out
                 else: 
                     raise ValueError(f"Unknown family: {family}")
                 total_loss += loss.item()*X.size(0)
@@ -341,7 +359,7 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                 a = logits - target
                 if w is not None: 
                     a = a*w.unsqueeze(1)
-                a_prev = a_table[idx].to(weight.device)
+                a_prev = a_table[idx].to(weight_device)
 
                 # weight parameter
                 w_grad = (a.unsqueeze(2) * X.unsqueeze(1)).mean(0) 
@@ -403,7 +421,7 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
 
             nnz = (weight.abs() > 1e-5).sum().item()
             total = weight.numel()
-            if verbose and (t % verbose) == 0: 
+            if verbose_every is not None and (t % verbose_every) == 0: 
                 if lookbehind is None: 
                     logger(f"obj {saga_obj.item()} weight nnz {nnz}/{total} ({nnz/total:.4f}) criteria {criteria:.4f} {dw} {db}")
                 else: 

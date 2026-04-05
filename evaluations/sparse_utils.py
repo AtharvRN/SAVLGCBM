@@ -11,6 +11,9 @@ import model.utils as utils
 import data.utils as data_utils
 from data.concept_dataset import get_concept_dataloader, get_final_layer_dataset
 from glm_saga.elasticnet import IndexedTensorDataset, glm_saga
+from methods.lf import TransformedSubset, use_original_label_free_protocol
+from methods.salf import SpatialBackbone, build_spatial_concept_layer
+from methods.savlg import create_savlg_splits, pool_concept_maps
 from model.cbm import (
     Backbone,
     BackboneCLIP,
@@ -37,6 +40,7 @@ def measure_acc(
     device="cuda",
     max_lam=0.01,
     measure_level=(5, 10, 15, 20, 25, 30),
+    max_glm_steps=MAX_GLM_STEP,
 ):
     linear = torch.nn.Linear(num_concepts, num_classes).to(device)
     linear.weight.data.zero_()
@@ -48,7 +52,7 @@ def measure_acc(
     metadata["max_reg"]["nongrouped"] = max_lam
     # Solve the GLM path
     max_sparsity = measure_level[-1] / num_concepts
-    output_proj = glm_saga(linear, train_loader, saga_step_size, saga_n_iters, ALPHA, k=MAX_GLM_STEP, epsilon=1 / (GLM_STEP_SIZE ** MAX_GLM_STEP),
+    output_proj = glm_saga(linear, train_loader, saga_step_size, saga_n_iters, ALPHA, k=max_glm_steps, epsilon=1 / (GLM_STEP_SIZE ** max_glm_steps),
                     val_loader=val_loader, test_loader=test_concept_loader, do_zero=False, metadata=metadata, n_ex=num_samples, n_classes=num_classes,
                     max_sparsity=max_sparsity)
     path = output_proj['path']
@@ -94,7 +98,7 @@ def measure_acc(
     return path, {NEC: weight for NEC, weight in zip(measure_level, weights)}, accs
 
 
-def sparsity_acc_test(load_dir, lam_max=0.1, bot_filter=0, anno=None):
+def sparsity_acc_test(load_dir, lam_max=0.1, bot_filter=0, anno=None, n_iters=None, max_glm_steps=MAX_GLM_STEP):
     # Load arguments
     with open(os.path.join(load_dir, "args.txt"), "r") as f:
         args = json.load(f)
@@ -191,9 +195,10 @@ def sparsity_acc_test(load_dir, lam_max=0.1, bot_filter=0, anno=None):
         val_concept_loader,
         test_concept_loader,
         saga_step_size=args.saga_step_size,
-        saga_n_iters=args.saga_n_iters,
+        saga_n_iters=n_iters if n_iters is not None else args.saga_n_iters,
         device=args.device,
         max_lam=lam_max,
+        max_glm_steps=max_glm_steps,
     )
     sparsity_list = [
         (params["weight"].abs() > 1e-5).float().mean().item() for params in path
@@ -210,7 +215,7 @@ def sparsity_acc_test(load_dir, lam_max=0.1, bot_filter=0, anno=None):
     return accs
 
 
-def sparsity_acc_test_lf_cbm(load_dir, lam_max=0.1):
+def sparsity_acc_test_lf_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_steps=MAX_GLM_STEP):
     # Load arguments
     with open(os.path.join(load_dir, "args.txt"), "r") as f:
         args = json.load(f)
@@ -269,9 +274,10 @@ def sparsity_acc_test_lf_cbm(load_dir, lam_max=0.1):
         train_concept_loader,
         None,
         test_concept_loader,
-        saga_n_iters=args.n_iters,
+        saga_n_iters=n_iters if n_iters is not None else args.n_iters,
         device=args.device,
         max_lam=lam_max,
+        max_glm_steps=max_glm_steps,
     )
     sparsity_list = [
         (params["weight"].abs() > 1e-5).float().mean().item() for params in path
@@ -281,6 +287,243 @@ def sparsity_acc_test_lf_cbm(load_dir, lam_max=0.1):
     df = pd.DataFrame(data={"NEC": NEC, "Accuracy": acc})
     df.to_csv(os.path.join(load_dir, "metrics.csv"))
     # Save truncated weights
+    for NEC in truncated_weights:
+        W, b = truncated_weights[NEC]
+        torch.save(W, os.path.join(load_dir, f"W_g@NEC={NEC:d}.pt"))
+        torch.save(b, os.path.join(load_dir, f"b_g@NEC={NEC:d}.pt"))
+    return accs
+
+
+def _extract_salf_concepts(backbone, concept_layer, loader, device):
+    backbone.eval()
+    concept_layer.eval()
+    concept_features = []
+    concept_labels = []
+    with torch.no_grad():
+        for images, labels in tqdm(loader):
+            images = images.to(device)
+            maps = concept_layer(backbone(images))
+            pooled = torch.nn.functional.adaptive_avg_pool2d(maps, 1).flatten(1)
+            concept_features.append(pooled.cpu())
+            concept_labels.append(labels)
+    return torch.cat(concept_features, dim=0), torch.cat(concept_labels, dim=0)
+
+
+def _extract_savlg_concepts(args, backbone, concept_layer, loader):
+    backbone.eval()
+    concept_layer.eval()
+    concept_features = []
+    concept_labels = []
+    with torch.no_grad():
+        for images, labels in tqdm(loader):
+            images = images.to(args.device)
+            maps = concept_layer(backbone(images))
+            pooled = pool_concept_maps(maps, args)
+            concept_features.append(pooled.cpu())
+            concept_labels.append(labels)
+    return torch.cat(concept_features, dim=0), torch.cat(concept_labels, dim=0)
+
+
+def sparsity_acc_test_salf_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_steps=MAX_GLM_STEP):
+    with open(os.path.join(load_dir, "args.txt"), "r") as f:
+        args = json.load(f)
+        args = argparse.Namespace(**args)
+    with open(os.path.join(load_dir, "concepts.txt"), "r") as f:
+        concepts = f.read().split("\n")
+    classes = data_utils.get_classes(args.dataset)
+
+    backbone = SpatialBackbone(args.backbone, device=args.device)
+    concept_layer = build_spatial_concept_layer(
+        args, backbone.output_dim, len(concepts)
+    )
+    concept_layer.load_state_dict(
+        torch.load(os.path.join(load_dir, "concept_layer.pt"), map_location=args.device)
+    )
+
+    if use_original_label_free_protocol(args):
+        train_dataset = data_utils.get_data(
+            f"{args.dataset}_train", preprocess=backbone.preprocess
+        )
+        test_dataset = data_utils.get_data(
+            f"{args.dataset}_val", preprocess=backbone.preprocess
+        )
+    else:
+        base_train = data_utils.get_data(f"{args.dataset}_train", preprocess=None)
+        total = len(base_train)
+        n_val = int(args.val_split * total)
+        n_train = total - n_val
+        generator = torch.Generator().manual_seed(args.seed)
+        train_subset, _ = torch.utils.data.random_split(
+            list(range(total)),
+            [n_train, n_val],
+            generator=generator,
+        )
+        train_dataset = TransformedSubset(
+            base_train, train_subset.indices, backbone.preprocess
+        )
+        base_test = data_utils.get_data(f"{args.dataset}_val", preprocess=None)
+        test_dataset = TransformedSubset(
+            base_test, list(range(len(base_test))), backbone.preprocess
+        )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.cbl_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.cbl_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+
+    train_concepts, train_labels = _extract_salf_concepts(
+        backbone, concept_layer, train_loader, args.device
+    )
+    test_concepts, test_labels = _extract_salf_concepts(
+        backbone, concept_layer, test_loader, args.device
+    )
+
+    train_mean = torch.load(
+        os.path.join(load_dir, "proj_mean.pt"), map_location="cpu"
+    )
+    train_std = torch.load(
+        os.path.join(load_dir, "proj_std.pt"), map_location="cpu"
+    )
+    train_concepts = (train_concepts - train_mean) / train_std
+    test_concepts = (test_concepts - train_mean) / train_std
+
+    train_concept_loader = DataLoader(
+        IndexedTensorDataset(train_concepts, train_labels),
+        batch_size=args.saga_batch_size,
+        shuffle=False,
+    )
+    test_concept_loader = DataLoader(
+        TensorDataset(test_concepts, test_labels),
+        batch_size=args.saga_batch_size,
+        shuffle=False,
+    )
+
+    path, truncated_weights, accs = measure_acc(
+        len(concepts),
+        len(classes),
+        len(train_concept_loader.dataset),
+        train_concept_loader,
+        None,
+        test_concept_loader,
+        saga_step_size=args.saga_step_size,
+        saga_n_iters=n_iters if n_iters is not None else args.saga_n_iters,
+        device=args.device,
+        max_lam=lam_max,
+        max_glm_steps=max_glm_steps,
+    )
+    sparsity_list = [
+        (params["weight"].abs() > 1e-5).float().mean().item() for params in path
+    ]
+    NEC = [len(concepts) * sparsity for sparsity in sparsity_list]
+    acc = [params["metrics"]["acc_test"] for params in path]
+    df = pd.DataFrame(data={"NEC": NEC, "Accuracy": acc})
+    df.to_csv(os.path.join(load_dir, "metrics.csv"))
+    for NEC in truncated_weights:
+        W, b = truncated_weights[NEC]
+        torch.save(W, os.path.join(load_dir, f"W_g@NEC={NEC:d}.pt"))
+        torch.save(b, os.path.join(load_dir, f"b_g@NEC={NEC:d}.pt"))
+    return accs
+
+
+def sparsity_acc_test_savlg_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_steps=MAX_GLM_STEP):
+    with open(os.path.join(load_dir, "args.txt"), "r") as f:
+        args = json.load(f)
+        args = argparse.Namespace(**args)
+    with open(os.path.join(load_dir, "concepts.txt"), "r") as f:
+        concepts = f.read().split("\n")
+    classes = data_utils.get_classes(args.dataset)
+
+    _, _, train_dataset, val_dataset, test_dataset, backbone = create_savlg_splits(args)
+    concept_layer = build_spatial_concept_layer(
+        args, backbone.output_dim, len(concepts)
+    )
+    concept_layer.load_state_dict(
+        torch.load(os.path.join(load_dir, "concept_layer.pt"), map_location=args.device)
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.cbl_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.cbl_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.cbl_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+
+    train_concepts, train_labels = _extract_savlg_concepts(
+        args, backbone, concept_layer, train_loader
+    )
+    val_concepts, val_labels = _extract_savlg_concepts(
+        args, backbone, concept_layer, val_loader
+    )
+    test_concepts, test_labels = _extract_savlg_concepts(
+        args, backbone, concept_layer, test_loader
+    )
+
+    train_mean = torch.load(
+        os.path.join(load_dir, "proj_mean.pt"), map_location="cpu"
+    )
+    train_std = torch.load(
+        os.path.join(load_dir, "proj_std.pt"), map_location="cpu"
+    )
+    train_concepts = (train_concepts - train_mean) / train_std
+    val_concepts = (val_concepts - train_mean) / train_std
+    test_concepts = (test_concepts - train_mean) / train_std
+
+    train_concept_loader = DataLoader(
+        IndexedTensorDataset(train_concepts, train_labels),
+        batch_size=args.saga_batch_size,
+        shuffle=True,
+    )
+    val_concept_loader = DataLoader(
+        TensorDataset(val_concepts, val_labels),
+        batch_size=args.saga_batch_size,
+        shuffle=False,
+    )
+    test_concept_loader = DataLoader(
+        TensorDataset(test_concepts, test_labels),
+        batch_size=args.saga_batch_size,
+        shuffle=False,
+    )
+
+    path, truncated_weights, accs = measure_acc(
+        len(concepts),
+        len(classes),
+        len(train_concept_loader.dataset),
+        train_concept_loader,
+        val_concept_loader,
+        test_concept_loader,
+        saga_step_size=args.saga_step_size,
+        saga_n_iters=n_iters if n_iters is not None else args.saga_n_iters,
+        device=args.device,
+        max_lam=lam_max,
+        max_glm_steps=max_glm_steps,
+    )
+    sparsity_list = [
+        (params["weight"].abs() > 1e-5).float().mean().item() for params in path
+    ]
+    NEC = [len(concepts) * sparsity for sparsity in sparsity_list]
+    acc = [params["metrics"]["acc_test"] for params in path]
+    df = pd.DataFrame(data={"NEC": NEC, "Accuracy": acc})
+    df.to_csv(os.path.join(load_dir, "metrics.csv"))
     for NEC in truncated_weights:
         W, b = truncated_weights[NEC]
         torch.save(W, os.path.join(load_dir, f"W_g@NEC={NEC:d}.pt"))
