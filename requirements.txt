@@ -3,6 +3,9 @@ torchvision
 matplotlib
 tqdm
 pandas
+mmengine==0.10.7
+mmcv==2.2.0
+mmpretrain==1.2.0
 notebook
 tensorboard
 loguru
@@ -10,3 +13,6 @@ pytorchcv
 opencv-python
 scikit-learn
 torcheval
+ftfy
+regex
+https://github.com/openai/CLIP/archive/refs/heads/main.zip

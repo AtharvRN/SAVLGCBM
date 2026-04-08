@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from matplotlib import pyplot as plt
 import torch
@@ -36,6 +37,8 @@ LABEL_FILES = {
 
 BACKBONE_ENCODING_DIMENSION = {
     "resnet18_cub": 512,
+    "resnet50_cub": 2048,
+    "resnet50_cub_mm": 2048,
     "clip_RN50": 1024,
     "clip_RN50_penultimate": 2048,
     "resnet50": 2048,
@@ -43,7 +46,54 @@ BACKBONE_ENCODING_DIMENSION = {
 
 BACKBONE_VISUALIZATION_TARGET_LAYER = {
     "resnet18_cub": "features.stage4.unit2.body.conv2",
+    "resnet50_cub": "features.stage4.unit3.body.conv3",
+    "resnet50_cub_mm": "layer4.2.conv3",
 }
+
+MM_RESNET50_CUB_CHECKPOINT_URL = (
+    "https://download.openmmlab.com/mmclassification/v0/resnet/"
+    "resnet50_8xb8_cub_20220307-57840e60.pth"
+)
+
+
+def get_resnet50_cub_mm_preprocess():
+    return transforms.Compose(
+        [
+            transforms.Resize(600),
+            transforms.CenterCrop(448),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[123.675 / 255.0, 116.28 / 255.0, 103.53 / 255.0],
+                std=[58.395 / 255.0, 57.12 / 255.0, 57.375 / 255.0],
+            ),
+        ]
+    )
+
+
+def _strip_prefix_state_dict(state_dict: Dict[str, torch.Tensor], prefix: str) -> Dict[str, torch.Tensor]:
+    stripped = {}
+    plen = len(prefix)
+    for key, value in state_dict.items():
+        if key.startswith(prefix):
+            stripped[key[plen:]] = value
+    return stripped
+
+
+def load_mm_resnet50_cub_state_dict(cache_dir: str = "~/.cache/torch/hub/checkpoints") -> Dict[str, torch.Tensor]:
+    cache_dir = os.path.expanduser(cache_dir)
+    os.makedirs(cache_dir, exist_ok=True)
+    filename = os.path.basename(urlparse(MM_RESNET50_CUB_CHECKPOINT_URL).path)
+    file_path = os.path.join(cache_dir, filename)
+    if not os.path.exists(file_path):
+        torch.hub.download_url_to_file(MM_RESNET50_CUB_CHECKPOINT_URL, file_path)
+    checkpoint = torch.load(file_path, map_location="cpu")
+    state_dict = checkpoint.get("state_dict", checkpoint)
+    stripped = _strip_prefix_state_dict(state_dict, "backbone.")
+    if not stripped:
+        raise RuntimeError(
+            f"Failed to extract backbone weights from MMPretrain checkpoint {file_path}."
+        )
+    return stripped
 
 def get_resnet_imagenet_preprocess():
     target_mean = [0.485, 0.456, 0.406]
@@ -228,10 +278,22 @@ def get_target_model(target_name, device):
         target_model.eval()
         preprocess = get_resnet_imagenet_preprocess()
 
-    elif target_name == "resnet18_cub":
-        target_model = ptcv_get_model("resnet18_cub", pretrained=True).to(device)
+    elif target_name in {"resnet18_cub", "resnet50_cub"}:
+        target_model = ptcv_get_model(target_name, pretrained=True).to(device)
         target_model.eval()
         preprocess = get_resnet_imagenet_preprocess()
+
+    elif target_name == "resnet50_cub_mm":
+        target_model = models.resnet50(weights=None).to(device)
+        missing = target_model.load_state_dict(load_mm_resnet50_cub_state_dict(), strict=False)
+        unexpected = list(getattr(missing, "unexpected_keys", []))
+        missing_keys = [k for k in getattr(missing, "missing_keys", []) if not k.startswith("fc.")]
+        if unexpected or missing_keys:
+            raise RuntimeError(
+                f"Unexpected MMPretrain ResNet-50 CUB load mismatch. missing={missing_keys} unexpected={unexpected}"
+            )
+        target_model.eval()
+        preprocess = get_resnet50_cub_mm_preprocess()
 
     elif target_name.endswith("_v2"):
         target_name = target_name[:-3]

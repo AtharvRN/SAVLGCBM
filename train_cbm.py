@@ -18,6 +18,7 @@ from data.concept_dataset import (
     get_concept_dataloader,
     get_filtered_concepts_and_counts,
     get_final_layer_dataset,
+    get_or_create_backbone_embedding_cache,
 )
 from loss import get_loss
 from model.cbm import (
@@ -137,6 +138,11 @@ def train_cbm_and_save(args):
 
     # setup tensorboard writer
     tb_writer = SummaryWriter(save_dir)
+    activation_cache_dir = (
+        args.activation_cache_dir
+        if args.activation_cache_dir is not None
+        else os.path.join(args.annotation_dir, "_cache", "backbone_embeddings")
+    )
 
     # setup all dataloaders
     augmented_train_cbl_loader = get_concept_dataloader(
@@ -222,6 +228,19 @@ def train_cbm_and_save(args):
             num_hidden=args.cbl_hidden_layers,
             device=args.device,
         )
+        cached_val_embeddings = None
+        cached_val_concepts = None
+        use_activation_cache = args.use_activation_cache and not args.cbl_finetune
+        if use_activation_cache:
+            val_cached = get_or_create_backbone_embedding_cache(
+                backbone,
+                val_cbl_loader,
+                device=args.device,
+                cache_dir=activation_cache_dir,
+                cache_tag="val",
+            )
+            cached_val_embeddings = val_cached["embeddings"]
+            cached_val_concepts = val_cached["concept_one_hot"]
         cbl, backbone = train_cbl(
             backbone,
             cbl,
@@ -239,6 +258,8 @@ def train_cbm_and_save(args):
             scheduler=args.cbl_scheduler,
             backbone_lr=args.cbl_lr * args.cbl_bb_lr_rate,
             data_parallel=args.data_parallel,
+            cached_val_embeddings=cached_val_embeddings,
+            cached_val_concepts=cached_val_concepts,
         )
     else:
         logger.info("Loading CBL from {}".format(args.load_dir))
@@ -270,6 +291,8 @@ def train_cbm_and_save(args):
         load_dir=args.load_dir,
         batch_size=args.saga_batch_size,
         device=args.device,
+        use_activation_cache=args.use_activation_cache and not args.cbl_finetune,
+        activation_cache_dir=activation_cache_dir,
     )
 
     # Make linear model
@@ -562,6 +585,17 @@ def main():
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
     parser.add_argument(
+        "--activation_cache_dir",
+        type=str,
+        default=None,
+        help="Shared directory for cached deterministic backbone embeddings",
+    )
+    parser.add_argument(
+        "--disable_activation_cache",
+        action="store_true",
+        help="Disable deterministic backbone activation caching",
+    )
+    parser.add_argument(
         "--dense", action="store_true", help="train with dense or sparse method"
     )
     parser.add_argument(
@@ -652,6 +686,358 @@ def main():
         action="store_true",
         help="Use BatchNorm in LF-CBM MLP concept bottleneck",
     )
+    parser.add_argument(
+        "--cbl_hidden_dim",
+        type=int,
+        default=0,
+        help="Hidden dimension for SALF/SAVLG spatial MLP bottlenecks; <=0 uses backbone dim",
+    )
+    parser.add_argument(
+        "--cbl_early_stop_patience",
+        type=int,
+        default=0,
+        help="Early-stop patience for SAVLG/SALF concept-head training; <=0 disables",
+    )
+    parser.add_argument(
+        "--cbl_min_epochs",
+        type=int,
+        default=0,
+        help="Minimum number of concept-head epochs before SAVLG/SALF early-stop can trigger",
+    )
+    parser.add_argument(
+        "--cbl_min_delta",
+        type=float,
+        default=0.0,
+        help="Minimum validation-loss improvement required to reset SAVLG/SALF early-stop patience",
+    )
+    parser.add_argument(
+        "--lf_original_protocol",
+        action="store_true",
+        help="Use the original LF-style official train/test split semantics when supported",
+    )
+    parser.add_argument("--grid_h", type=int, default=7, help="Spatial grid height for SALF/SAVLG")
+    parser.add_argument("--grid_w", type=int, default=7, help="Spatial grid width for SALF/SAVLG")
+    parser.add_argument(
+        "--prompt_radius",
+        type=int,
+        default=3,
+        help="Prompt radius in raw-image pixels for SALF prompt-grid target generation",
+    )
+    parser.add_argument(
+        "--spatial_source",
+        type=str,
+        default="prompt_grid",
+        choices=["prompt_grid", "patch_tokens"],
+        help="How SALF/SAVLG spatial targets are constructed",
+    )
+    parser.add_argument(
+        "--savlg_spatial_stage",
+        type=str,
+        default="conv5",
+        choices=["conv3", "conv4", "conv5"],
+        help="Spatial backbone stage for SALF/SAVLG ResNet18 runs: conv3=28x28x128, conv4=14x14x256, conv5=7x7x512",
+    )
+    parser.add_argument(
+        "--spatial_batch_size",
+        type=int,
+        default=128,
+        help="Dataset batch size used only while building SALF/SAVLG spatial target tensors",
+    )
+    parser.add_argument(
+        "--prompt_batch_size",
+        type=int,
+        default=1024,
+        help="Prompted-image CLIP batch size used while building SALF prompt-grid targets",
+    )
+    parser.add_argument(
+        "--spatial_num_workers",
+        type=int,
+        default=8,
+        help="Dataloader worker count used only while building SALF/SAVLG spatial target tensors",
+    )
+    parser.add_argument(
+        "--activation_dir",
+        type=str,
+        default="saved_activations",
+        help="Directory used for cached LF/SALF/SAVLG intermediate artifacts",
+    )
+    parser.add_argument(
+        "--recompute_spatial_sims",
+        action="store_true",
+        help="Force recompute cached SALF/SAVLG spatial target tensors",
+    )
+    parser.add_argument(
+        "--loss_global_concept_w",
+        type=float,
+        default=None,
+        help="Weight for SAVLG global concept BCE loss; if omitted, the deprecated --loss_presence_w alias is used when present.",
+    )
+    parser.add_argument(
+        "--loss_presence_w",
+        type=float,
+        default=None,
+        help="Deprecated alias for --loss_global_concept_w.",
+    )
+    parser.add_argument(
+        "--loss_mask_w",
+        type=float,
+        default=1.0,
+        help="Weight for SAVLG local patch-mask BCE loss",
+    )
+    parser.add_argument(
+        "--loss_dice_w",
+        type=float,
+        default=0.0,
+        help="Weight for SAVLG local Dice loss on valid boxed concepts",
+    )
+    parser.add_argument(
+        "--global_bce_pos_weight",
+        type=float,
+        default=1.0,
+        help="Positive-class weight for SAVLG global concept BCE",
+    )
+    parser.add_argument(
+        "--patch_bce_pos_weight",
+        type=float,
+        default=1.0,
+        help="Positive-class weight for SAVLG local patch-mask BCE",
+    )
+    parser.add_argument(
+        "--local_bce_pos_weight",
+        type=float,
+        default=1.0,
+        help="Positive-class weight for SAVLG local MIL BCE",
+    )
+    parser.add_argument(
+        "--savlg_global_target_mode",
+        type=str,
+        default="binary_threshold",
+        choices=["binary_threshold", "raw_logit"],
+        help="How SAVLG converts annotation logits into global concept targets; binary_threshold matches VLG concept labels.",
+    )
+    parser.add_argument(
+        "--savlg_concept_filter_mode",
+        type=str,
+        default="spatial_threshold",
+        choices=["spatial_threshold", "vlg_global"],
+        help="How SAVLG filters concepts before training. 'vlg_global' reuses the same concept-dataset filtering path as VLG-CBM.",
+    )
+    parser.add_argument(
+        "--loss_local_mil_w",
+        type=float,
+        default=0.0,
+        help="Weight for SAVLG auxiliary local MIL loss",
+    )
+    parser.add_argument(
+        "--savlg_local_weight_mode",
+        type=str,
+        default="uniform",
+        choices=["uniform", "confidence"],
+        help="How SAVLG reweights local losses across positive concept-image pairs",
+    )
+    parser.add_argument(
+        "--savlg_local_weight_floor",
+        type=float,
+        default=0.25,
+        help="Minimum local-loss weight retained for weak SAVLG positive pairs when confidence weighting is enabled",
+    )
+    parser.add_argument(
+        "--savlg_local_weight_power",
+        type=float,
+        default=1.0,
+        help="Exponent applied to normalized SAVLG annotation confidence when local confidence weighting is enabled",
+    )
+    parser.add_argument(
+        "--savlg_pooling",
+        type=str,
+        default="avg",
+        choices=["avg", "topk"],
+        help="Global pooling mode for SAVLG concept maps",
+    )
+    parser.add_argument(
+        "--savlg_branch_arch",
+        type=str,
+        default="shared",
+        choices=["shared", "dual"],
+        help="Whether SAVLG uses one shared spatial concept head or separate global/spatial heads.",
+    )
+    parser.add_argument(
+        "--savlg_global_head_mode",
+        type=str,
+        default="spatial_pool",
+        choices=["spatial_pool", "vlg_linear"],
+        help="How SAVLG computes global concept logits; vlg_linear matches the original VLG-CBM path with GAP over conv5 features followed by a linear concept layer.",
+    )
+    parser.add_argument(
+        "--savlg_init_from_vlg_path",
+        type=str,
+        default="",
+        help="Optional VLG-CBM checkpoint used to initialize compatible SAVLG concept heads.",
+    )
+    parser.add_argument(
+        "--savlg_init_spatial_from_vlg",
+        action="store_true",
+        help="When --savlg_init_from_vlg_path is set, also initialize compatible SAVLG spatial 1x1 concept layers from the VLG concept weights.",
+    )
+    parser.add_argument(
+        "--savlg_freeze_global_head",
+        action="store_true",
+        help="Freeze the SAVLG global concept head parameters after optional VLG warm-start, so only the spatial branch is trained.",
+    )
+    parser.add_argument(
+        "--no_savlg_freeze_global_head",
+        action="store_false",
+        dest="savlg_freeze_global_head",
+        help="Do not freeze the SAVLG global concept head parameters after optional VLG warm-start.",
+    )
+    parser.add_argument(
+        "--savlg_global_hidden_layers",
+        type=int,
+        default=0,
+        help="Number of hidden ReLU+Linear layers in the VLG-style SAVLG global concept head when --savlg_global_head_mode=vlg_linear.",
+    )
+    parser.add_argument(
+        "--savlg_global_hidden_dim",
+        type=int,
+        default=0,
+        help="Hidden width for the VLG-style SAVLG global concept head when using hidden layers; defaults to num_concepts if 0.",
+    )
+    parser.add_argument(
+        "--savlg_global_use_batchnorm",
+        action="store_true",
+        help="Use BatchNorm1d between hidden layers in the VLG-style SAVLG global concept head.",
+    )
+    parser.add_argument(
+        "--savlg_spatial_branch_mode",
+        type=str,
+        default="shared_stage",
+        choices=["shared_stage", "multiscale_conv45"],
+        help="How the SAVLG spatial branch consumes backbone features; multiscale_conv45 keeps the global branch on conv5 and fuses conv4+conv5 only for localization.",
+    )
+    parser.add_argument(
+        "--savlg_topk_fraction",
+        type=float,
+        default=0.2,
+        help="Patch fraction used when --savlg_pooling=topk",
+    )
+    parser.add_argument(
+        "--savlg_use_local_mil",
+        action="store_true",
+        help="Enable an auxiliary local MIL objective for SAVLG",
+    )
+    parser.add_argument(
+        "--savlg_local_pooling",
+        type=str,
+        default="lse",
+        choices=["lse", "topk"],
+        help="Pooling mode for SAVLG local MIL logits",
+    )
+    parser.add_argument(
+        "--savlg_mil_temperature",
+        type=float,
+        default=1.0,
+        help="Temperature for SAVLG LSE local MIL pooling",
+    )
+    parser.add_argument(
+        "--savlg_mil_topk_fraction",
+        type=float,
+        default=0.2,
+        help="Patch fraction used when --savlg_local_pooling=topk",
+    )
+    parser.add_argument(
+        "--savlg_residual_spatial_alpha",
+        type=float,
+        default=0.0,
+        help="Residual coupling weight in c_final = c_global + alpha * c_spatial for SAVLG concept logits.",
+    )
+    parser.add_argument(
+        "--savlg_residual_spatial_pooling",
+        type=str,
+        default="lse",
+        choices=["lse"],
+        help="Pooling mode for residual SAVLG spatial logits. This stage allows only lse.",
+    )
+    parser.add_argument(
+        "--savlg_global_spatial_consistency_w",
+        type=float,
+        default=0.0,
+        help="Weight for detached spatial-to-global SAVLG concept consistency on positive concept-image pairs",
+    )
+    parser.add_argument(
+        "--savlg_global_spatial_consistency_warmup_epochs",
+        type=int,
+        default=0,
+        help="Number of SAVLG concept-head epochs to wait before enabling spatial-to-global consistency",
+    )
+    parser.add_argument(
+        "--savlg_target_mode",
+        type=str,
+        default="hard_iou",
+        choices=["hard_iou", "soft_box"],
+        help="How SAVLG rasterizes box supervision into patch targets",
+    )
+    parser.add_argument(
+        "--savlg_local_loss_mode",
+        type=str,
+        default="bce",
+        choices=["bce", "containment", "soft_align"],
+        help="How SAVLG applies local box supervision once patch targets are built",
+    )
+    parser.add_argument(
+        "--savlg_outside_penalty_w",
+        type=float,
+        default=0.0,
+        help="Weight for penalizing normalized SAVLG spatial activation mass outside the GT box",
+    )
+    parser.add_argument(
+        "--patch_iou_thresh",
+        type=float,
+        default=0.5,
+        help="IoU threshold used for SAVLG hard patch targets",
+    )
+    parser.add_argument(
+        "--savlg_teacher_load_path",
+        type=str,
+        default=None,
+        help="Optional VLG-CBM teacher checkpoint directory for SAVLG distillation",
+    )
+    parser.add_argument(
+        "--savlg_distill_w",
+        type=float,
+        default=0.0,
+        help="Weight for SAVLG teacher-distillation loss on pooled concept logits",
+    )
+    parser.add_argument(
+        "--savlg_refine_w",
+        type=float,
+        default=0.0,
+        help="Weight for SAVLG OICR-style detached patch refinement loss",
+    )
+    parser.add_argument(
+        "--savlg_refine_warmup_epochs",
+        type=int,
+        default=0,
+        help="Number of SAVLG concept-head epochs to train before enabling refinement",
+    )
+    parser.add_argument(
+        "--clip_score_mode",
+        type=str,
+        default="topk",
+        choices=["mean", "topk", "quantile"],
+        help="How SALF reduces spatial target tensors to per-concept scores before clip_cutoff",
+    )
+    parser.add_argument(
+        "--clip_topk",
+        type=int,
+        default=500,
+        help="k used when --clip_score_mode=topk",
+    )
+    parser.add_argument(
+        "--clip_quantile",
+        type=float,
+        default=0.995,
+        help="Quantile used when --clip_score_mode=quantile",
+    )
 
     config_parser = argparse.ArgumentParser()
     config_parser.add_argument("--config", type=str, default=None)
@@ -663,6 +1049,7 @@ def main():
     
     # run the training
     args = parser.parse_args(remaining_args)
+    args.use_activation_cache = not args.disable_activation_cache
     logger.info(args)
     
     # set random seed for reproducibility

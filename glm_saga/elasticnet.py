@@ -266,9 +266,9 @@ def train_spg(linear, loader, max_lr, nepochs, lam, alpha, preprocess=None, min_
 # Since SAGA stores a scalar for each example-class pair, either pass 
 # the number of examples and number of classes or calculate it with an 
 # initial pass over the loaders
-def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None, 
-                state=None, table_device=None, n_ex=None, n_classes=None, tol=1e-4, 
-                preprocess=None, lookbehind=None, family='multinomial', logger=None): 
+def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None,
+                state=None, table_device=None, n_ex=None, n_classes=None, tol=1e-4,
+                preprocess=None, lookbehind=None, family='multinomial', logger=None):
     if logger is None: 
         logger = print
     with ch.no_grad(): 
@@ -359,7 +359,10 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                 a = logits - target
                 if w is not None: 
                     a = a*w.unsqueeze(1)
-                a_prev = a_table[idx].to(weight_device)
+                if a_table.device == weight_device:
+                    a_prev = a_table[idx]
+                else:
+                    a_prev = a_table[idx].to(weight_device, non_blocking=True)
 
                 # weight parameter
                 w_grad = (a.unsqueeze(2) * X.unsqueeze(1)).mean(0) 
@@ -387,7 +390,10 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                 bias_new = bias - lr*b_saga
 
                 # update table and averages
-                a_table[idx] = a.to(table_device)
+                if a_table.device == weight_device:
+                    a_table[idx] = a
+                else:
+                    a_table[idx] = a.to(table_device, non_blocking=True)
                 w_grad_avg.add_((w_grad - w_grad_prev)*X.size(0)/n_ex)
                 b_grad_avg.add_((b_grad - b_grad_prev)*X.size(0)/n_ex)
 
@@ -543,13 +549,14 @@ def maximum_reg_loader(loader, group=True, preprocess=None, metadata=None, famil
 
 # Calculate the regularization path of an elastic GLM with proximal SAGA 
 # Returns a dictionary of <regularization parameter> -> <linear weights and optimizer state>
-def glm_saga(linear, loader, max_lr, nepochs, alpha, 
-             table_device=None, preprocess=None, group=False, 
-             verbose=None, state=None, n_ex=None, n_classes=None, 
-             tol=1e-4, epsilon=0.001, k=100, checkpoint=None, 
-             do_zero=True, lr_decay_factor=1, metadata=None, 
-             val_loader=None, test_loader=None, lookbehind=None, 
-             family='multinomial', encoder=None, max_sparsity=None): 
+def glm_saga(linear, loader, max_lr, nepochs, alpha,
+             table_device=None, preprocess=None, group=False,
+             verbose=None, state=None, n_ex=None, n_classes=None,
+             tol=1e-4, epsilon=0.001, k=100, checkpoint=None,
+             do_zero=True, lr_decay_factor=1, metadata=None,
+             val_loader=None, test_loader=None, lookbehind=None,
+             family='multinomial', encoder=None, max_sparsity=None,
+             eval_train=True, eval_val=True, eval_test=True):
     if encoder is not None: 
         warnings.warn("encoder argument is deprecated; please use preprocess instead", DeprecationWarning)
         preprocess = encoder
@@ -579,6 +586,7 @@ def glm_saga(linear, loader, max_lr, nepochs, alpha,
 
     path = []
     best_val_loss = float('inf')
+    best_params = None
 
     if checkpoint is not None: 
         os.makedirs(checkpoint, exist_ok=True)
@@ -604,19 +612,27 @@ def glm_saga(linear, loader, max_lr, nepochs, alpha,
                     state=state, n_ex=n_ex, n_classes=n_classes, tol=tol, lookbehind=lookbehind, 
                     family=family, logger=logger)
         
-        with ch.no_grad(): 
-            loss,acc = elastic_loss_and_acc_loader(linear, loader, lam, alpha, preprocess=preprocess, family=family)
-            loss,acc = loss.item(),acc.item()
+        with ch.no_grad():
+            loss, acc = float("nan"), float("nan")
+            if eval_train:
+                loss, acc = elastic_loss_and_acc_loader(
+                    linear, loader, lam, alpha, preprocess=preprocess, family=family
+                )
+                loss, acc = loss.item(), acc.item()
 
-            loss_val,acc_val = -1,-1
-            if val_loader: 
-                loss_val,acc_val = elastic_loss_and_acc_loader(linear, val_loader, lam, alpha, preprocess=preprocess, family=family)
-                loss_val,acc_val = loss_val.item(),acc_val.item()
+            loss_val, acc_val = float("nan"), float("nan")
+            if eval_val and val_loader:
+                loss_val, acc_val = elastic_loss_and_acc_loader(
+                    linear, val_loader, lam, alpha, preprocess=preprocess, family=family
+                )
+                loss_val, acc_val = loss_val.item(), acc_val.item()
 
-            loss_test,acc_test = -1,-1
-            if test_loader: 
-                loss_test,acc_test = elastic_loss_and_acc_loader(linear, test_loader, lam, alpha, preprocess=preprocess, family=family)
-                loss_test,acc_test = loss_test.item(),acc_test.item()
+            loss_test, acc_test = float("nan"), float("nan")
+            if eval_test and test_loader:
+                loss_test, acc_test = elastic_loss_and_acc_loader(
+                    linear, test_loader, lam, alpha, preprocess=preprocess, family=family
+                )
+                loss_test, acc_test = loss_test.item(), acc_test.item()
 
             params = {
                 "lam": lam, 
@@ -637,8 +653,10 @@ def glm_saga(linear, loader, max_lr, nepochs, alpha,
 
             }
             path.append(params)
-            if loss_val is not None and loss_val < best_val_loss: 
+            if eval_val and not math.isnan(loss_val) and loss_val < best_val_loss:
                 best_val_loss = loss_val
+                best_params = params
+            if best_params is None:
                 best_params = params
 
             nnz = (linear.weight.abs() > 1e-5).sum().item()

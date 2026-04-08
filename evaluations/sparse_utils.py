@@ -13,7 +13,13 @@ from data.concept_dataset import get_concept_dataloader, get_final_layer_dataset
 from glm_saga.elasticnet import IndexedTensorDataset, glm_saga
 from methods.lf import TransformedSubset, use_original_label_free_protocol
 from methods.salf import SpatialBackbone, build_spatial_concept_layer
-from methods.savlg import create_savlg_splits, pool_concept_maps
+from methods.savlg import (
+    build_savlg_concept_layer,
+    compute_savlg_concept_logits,
+    create_savlg_splits,
+    forward_savlg_backbone,
+    forward_savlg_concept_layer,
+)
 from model.cbm import (
     Backbone,
     BackboneCLIP,
@@ -54,7 +60,7 @@ def measure_acc(
     max_sparsity = measure_level[-1] / num_concepts
     output_proj = glm_saga(linear, train_loader, saga_step_size, saga_n_iters, ALPHA, k=max_glm_steps, epsilon=1 / (GLM_STEP_SIZE ** max_glm_steps),
                     val_loader=val_loader, test_loader=test_concept_loader, do_zero=False, metadata=metadata, n_ex=num_samples, n_classes=num_classes,
-                    max_sparsity=max_sparsity)
+                    max_sparsity=max_sparsity, eval_train=False, eval_val=False, eval_test=False)
     path = output_proj['path']
     sparsity_list = [(params['weight'].abs() > 1e-5).float().mean().item() for params in path]
 
@@ -204,7 +210,7 @@ def sparsity_acc_test(load_dir, lam_max=0.1, bot_filter=0, anno=None, n_iters=No
         (params["weight"].abs() > 1e-5).float().mean().item() for params in path
     ]
     NEC = [len(concepts) * sparsity for sparsity in sparsity_list]
-    acc = [params["metrics"]["acc_test"] for params in path]
+    acc = [params["metrics"].get("acc_test", float("nan")) for params in path]
     df = pd.DataFrame(data={"NEC": NEC, "Accuracy": acc})
     df.to_csv(os.path.join(load_dir, "metrics.csv"))
     # Save truncated weights
@@ -283,7 +289,7 @@ def sparsity_acc_test_lf_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_steps=
         (params["weight"].abs() > 1e-5).float().mean().item() for params in path
     ]
     NEC = [len(concepts) * sparsity for sparsity in sparsity_list]
-    acc = [params["metrics"]["acc_test"] for params in path]
+    acc = [params["metrics"].get("acc_test", float("nan")) for params in path]
     df = pd.DataFrame(data={"NEC": NEC, "Accuracy": acc})
     df.to_csv(os.path.join(load_dir, "metrics.csv"))
     # Save truncated weights
@@ -317,9 +323,14 @@ def _extract_savlg_concepts(args, backbone, concept_layer, loader):
     with torch.no_grad():
         for images, labels in tqdm(loader):
             images = images.to(args.device)
-            maps = concept_layer(backbone(images))
-            pooled = pool_concept_maps(maps, args)
-            concept_features.append(pooled.cpu())
+            feats = forward_savlg_backbone(backbone, images, args)
+            global_outputs, spatial_maps = forward_savlg_concept_layer(concept_layer, feats)
+            _, _, final_logits = compute_savlg_concept_logits(
+                global_outputs,
+                spatial_maps,
+                args,
+            )
+            concept_features.append(final_logits.cpu())
             concept_labels.append(labels)
     return torch.cat(concept_features, dim=0), torch.cat(concept_labels, dim=0)
 
@@ -333,9 +344,7 @@ def sparsity_acc_test_salf_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_step
     classes = data_utils.get_classes(args.dataset)
 
     backbone = SpatialBackbone(args.backbone, device=args.device)
-    concept_layer = build_spatial_concept_layer(
-        args, backbone.output_dim, len(concepts)
-    )
+    concept_layer = build_savlg_concept_layer(args, backbone, len(concepts))
     concept_layer.load_state_dict(
         torch.load(os.path.join(load_dir, "concept_layer.pt"), map_location=args.device)
     )
@@ -423,7 +432,7 @@ def sparsity_acc_test_salf_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_step
         (params["weight"].abs() > 1e-5).float().mean().item() for params in path
     ]
     NEC = [len(concepts) * sparsity for sparsity in sparsity_list]
-    acc = [params["metrics"]["acc_test"] for params in path]
+    acc = [params["metrics"].get("acc_test", float("nan")) for params in path]
     df = pd.DataFrame(data={"NEC": NEC, "Accuracy": acc})
     df.to_csv(os.path.join(load_dir, "metrics.csv"))
     for NEC in truncated_weights:
@@ -442,9 +451,7 @@ def sparsity_acc_test_savlg_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_ste
     classes = data_utils.get_classes(args.dataset)
 
     _, _, train_dataset, val_dataset, test_dataset, backbone = create_savlg_splits(args)
-    concept_layer = build_spatial_concept_layer(
-        args, backbone.output_dim, len(concepts)
-    )
+    concept_layer = build_savlg_concept_layer(args, backbone, len(concepts))
     concept_layer.load_state_dict(
         torch.load(os.path.join(load_dir, "concept_layer.pt"), map_location=args.device)
     )
@@ -521,7 +528,7 @@ def sparsity_acc_test_savlg_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_ste
         (params["weight"].abs() > 1e-5).float().mean().item() for params in path
     ]
     NEC = [len(concepts) * sparsity for sparsity in sparsity_list]
-    acc = [params["metrics"]["acc_test"] for params in path]
+    acc = [params["metrics"].get("acc_test", float("nan")) for params in path]
     df = pd.DataFrame(data={"NEC": NEC, "Accuracy": acc})
     df.to_csv(os.path.join(load_dir, "metrics.csv"))
     for NEC in truncated_weights:

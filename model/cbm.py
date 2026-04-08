@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.utils
 from loguru import logger
+from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -17,17 +18,36 @@ from glm_saga.elasticnet import glm_saga
 
 class CBM_model(torch.nn.Module):
     def __init__(
-        self, backbone_name, W_c, W_g, b_g, proj_mean, proj_std, device="cuda"
+        self,
+        backbone_name,
+        W_c,
+        W_g,
+        b_g,
+        proj_mean,
+        proj_std,
+        device="cuda",
+        use_clip_penultimate: bool = False,
     ):
         super().__init__()
-        model, preprocess = data_utils.get_target_model(backbone_name, device)
-        self.preprocess = preprocess
-        # remove final fully connected layer
         if "clip" in backbone_name:
-            self.backbone = model
-        elif "cub" in backbone_name:
+            clip_backbone = BackboneCLIP(
+                backbone_name,
+                use_penultimate=use_clip_penultimate,
+                device=device,
+            )
+            self.backbone = clip_backbone
+            self.preprocess = clip_backbone.preprocess
+        elif backbone_name == "resnet18_cub":
+            model, preprocess = data_utils.get_target_model(backbone_name, device)
+            self.preprocess = preprocess
             self.backbone = lambda x: model.features(x)
+        elif "cub" in backbone_name:
+            model, preprocess = data_utils.get_target_model(backbone_name, device)
+            self.preprocess = preprocess
+            self.backbone = torch.nn.Sequential(*list(model.children())[:-1])
         else:
+            model, preprocess = data_utils.get_target_model(backbone_name, device)
+            self.preprocess = preprocess
             self.backbone = torch.nn.Sequential(*list(model.children())[:-1])
 
         self.proj_layer = torch.nn.Linear(
@@ -54,15 +74,36 @@ class CBM_model(torch.nn.Module):
 
 
 class standard_model(torch.nn.Module):
-    def __init__(self, backbone_name, W_g, b_g, proj_mean, proj_std, device="cuda"):
+    def __init__(
+        self,
+        backbone_name,
+        W_g,
+        b_g,
+        proj_mean,
+        proj_std,
+        device="cuda",
+        use_clip_penultimate: bool = False,
+    ):
         super().__init__()
-        model, _ = data_utils.get_target_model(backbone_name, device)
-        # remove final fully connected layer
         if "clip" in backbone_name:
-            self.backbone = model
-        elif "cub" in backbone_name:
+            clip_backbone = BackboneCLIP(
+                backbone_name,
+                use_penultimate=use_clip_penultimate,
+                device=device,
+            )
+            self.backbone = clip_backbone
+            self.preprocess = clip_backbone.preprocess
+        elif backbone_name == "resnet18_cub":
+            model, preprocess = data_utils.get_target_model(backbone_name, device)
+            self.preprocess = preprocess
             self.backbone = lambda x: model.features(x)
+        elif "cub" in backbone_name:
+            model, preprocess = data_utils.get_target_model(backbone_name, device)
+            self.preprocess = preprocess
+            self.backbone = torch.nn.Sequential(*list(model.children())[:-1])
         else:
+            model, preprocess = data_utils.get_target_model(backbone_name, device)
+            self.preprocess = preprocess
             self.backbone = torch.nn.Sequential(*list(model.children())[:-1])
 
         self.proj_mean = proj_mean
@@ -88,6 +129,8 @@ class Backbone(nn.Module):
 
     def __init__(self, backbone_name: str, feature_layer: str, device: str = "cuda"):
         super().__init__()
+        self.backbone_name = backbone_name
+        self.feature_layer = feature_layer
         target_model, target_preprocess = data_utils.get_target_model(
             backbone_name, device
         )
@@ -293,7 +336,16 @@ def load_cbm(load_dir, device):
     proj_mean = torch.load(os.path.join(load_dir, "proj_mean.pt"), map_location=device)
     proj_std = torch.load(os.path.join(load_dir, "proj_std.pt"), map_location=device)
 
-    model = CBM_model(args["backbone"], W_c, W_g, b_g, proj_mean, proj_std, device)
+    model = CBM_model(
+        args["backbone"],
+        W_c,
+        W_g,
+        b_g,
+        proj_mean,
+        proj_std,
+        device,
+        use_clip_penultimate=args.get("use_clip_penultimate", False),
+    )
     return model
 
 
@@ -307,7 +359,15 @@ def load_std(load_dir, device):
     proj_mean = torch.load(os.path.join(load_dir, "proj_mean.pt"), map_location=device)
     proj_std = torch.load(os.path.join(load_dir, "proj_std.pt"), map_location=device)
 
-    model = standard_model(args["backbone"], W_g, b_g, proj_mean, proj_std, device)
+    model = standard_model(
+        args["backbone"],
+        W_g,
+        b_g,
+        proj_mean,
+        proj_std,
+        device,
+        use_clip_penultimate=args.get("use_clip_penultimate", False),
+    )
     return model
 
 
@@ -351,23 +411,41 @@ def validate_cbl(
     val_loader: DataLoader,
     loss_fn: torch.nn.Module,
     device: str = "cuda",
+    cached_embeddings: Optional[torch.Tensor] = None,
+    cached_concepts: Optional[torch.Tensor] = None,
+    cache_batch_size: int = 512,
 ):
     val_loss = 0.0
     with torch.no_grad():
         logger.info("Running CBL validation")
-        for features, concept_one_hot, _ in tqdm(val_loader):
-            features = features.to(device)
-            concept_one_hot = concept_one_hot.to(device)
+        if cached_embeddings is not None and cached_concepts is not None:
+            n_batches = 0
+            for start_idx in tqdm(
+                range(0, len(cached_embeddings), cache_batch_size),
+                total=max(1, (len(cached_embeddings) + cache_batch_size - 1) // cache_batch_size),
+            ):
+                end_idx = start_idx + cache_batch_size
+                embeddings = cached_embeddings[start_idx:end_idx].to(device)
+                concept_one_hot = cached_concepts[start_idx:end_idx].to(device)
+                concept_logits = cbl(embeddings)
+                batch_loss = loss_fn(concept_logits, concept_one_hot)
+                val_loss += batch_loss.item()
+                n_batches += 1
+            val_loss = val_loss / max(1, n_batches)
+        else:
+            for features, concept_one_hot, _ in tqdm(val_loader):
+                features = features.to(device)
+                concept_one_hot = concept_one_hot.to(device)
 
-            # forward pass
-            concept_logits = cbl(backbone(features))
+                # forward pass
+                concept_logits = cbl(backbone(features))
 
-            # calculate loss
-            batch_loss = loss_fn(concept_logits, concept_one_hot)
-            val_loss += batch_loss.item()
+                # calculate loss
+                batch_loss = loss_fn(concept_logits, concept_one_hot)
+                val_loss += batch_loss.item()
 
-        # finalize metrics and update model
-        val_loss = val_loss / len(val_loader)
+            # finalize metrics and update model
+            val_loss = val_loss / len(val_loader)
 
     return val_loss
 
@@ -389,6 +467,8 @@ def train_cbl(
     scheduler: str = None,
     backbone_lr: float = 1e-3,
     data_parallel=False,
+    cached_val_embeddings: Optional[torch.Tensor] = None,
+    cached_val_concepts: Optional[torch.Tensor] = None,
 ):
     # setup optimizer
     if optimizer == "sgd":
@@ -467,6 +547,8 @@ def train_cbl(
             val_loader,
             loss_fn=loss_fn,
             device=device,
+            cached_embeddings=cached_val_embeddings,
+            cached_concepts=cached_val_concepts,
         )
         if val_loss < best_val_loss:
             logger.info(f"Updating best val loss at epoch: {epoch}")
