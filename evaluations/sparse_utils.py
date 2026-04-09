@@ -14,11 +14,14 @@ from glm_saga.elasticnet import IndexedTensorDataset, glm_saga
 from methods.lf import TransformedSubset, use_original_label_free_protocol
 from methods.salf import SpatialBackbone, build_spatial_concept_layer
 from methods.savlg import (
+    CachedFeatureLabelDataset,
+    _savlg_feature_cache_enabled,
     build_savlg_concept_layer,
     compute_savlg_concept_logits,
     create_savlg_splits,
     forward_savlg_backbone,
     forward_savlg_concept_layer,
+    get_or_create_savlg_feature_cache,
 )
 from model.cbm import (
     Backbone,
@@ -322,8 +325,16 @@ def _extract_savlg_concepts(args, backbone, concept_layer, loader):
     concept_labels = []
     with torch.no_grad():
         for images, labels in tqdm(loader):
-            images = images.to(args.device)
-            feats = forward_savlg_backbone(backbone, images, args)
+            if isinstance(images, dict):
+                feats = {
+                    key: value.to(args.device, non_blocking=True)
+                    for key, value in images.items()
+                }
+            elif isinstance(images, torch.Tensor) and images.ndim == 4 and int(images.shape[1]) != 3:
+                feats = images.to(args.device, non_blocking=True)
+            else:
+                images = images.to(args.device)
+                feats = forward_savlg_backbone(backbone, images, args)
             global_outputs, spatial_maps = forward_savlg_concept_layer(concept_layer, feats)
             _, _, final_logits = compute_savlg_concept_logits(
                 global_outputs,
@@ -442,10 +453,23 @@ def sparsity_acc_test_salf_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_step
     return accs
 
 
-def sparsity_acc_test_savlg_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_steps=MAX_GLM_STEP):
+def sparsity_acc_test_savlg_cbm(
+    load_dir,
+    lam_max=0.1,
+    n_iters=None,
+    max_glm_steps=MAX_GLM_STEP,
+    cbl_batch_size=None,
+    saga_batch_size=None,
+):
     with open(os.path.join(load_dir, "args.txt"), "r") as f:
         args = json.load(f)
         args = argparse.Namespace(**args)
+    if cbl_batch_size is not None:
+        args.cbl_batch_size = cbl_batch_size
+    if saga_batch_size is not None:
+        args.saga_batch_size = saga_batch_size
+    if not hasattr(args, "use_activation_cache"):
+        args.use_activation_cache = not bool(getattr(args, "disable_activation_cache", False))
     with open(os.path.join(load_dir, "concepts.txt"), "r") as f:
         concepts = f.read().split("\n")
     classes = data_utils.get_classes(args.dataset)
@@ -456,24 +480,47 @@ def sparsity_acc_test_savlg_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_ste
         torch.load(os.path.join(load_dir, "concept_layer.pt"), map_location=args.device)
     )
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.cbl_batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.cbl_batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-    )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=args.cbl_batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-    )
+    if _savlg_feature_cache_enabled(args):
+        train_cached = get_or_create_savlg_feature_cache(args, backbone, train_dataset, "train")
+        val_cached = get_or_create_savlg_feature_cache(args, backbone, val_dataset, "val")
+        test_cached = get_or_create_savlg_feature_cache(args, backbone, test_dataset, "test")
+        train_loader = DataLoader(
+            CachedFeatureLabelDataset(train_cached["feats"], train_cached["labels"]),
+            batch_size=args.cbl_batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+        val_loader = DataLoader(
+            CachedFeatureLabelDataset(val_cached["feats"], val_cached["labels"]),
+            batch_size=args.cbl_batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+        test_loader = DataLoader(
+            CachedFeatureLabelDataset(test_cached["feats"], test_cached["labels"]),
+            batch_size=args.cbl_batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=args.cbl_batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=args.cbl_batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=args.cbl_batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+        )
 
     train_concepts, train_labels = _extract_savlg_concepts(
         args, backbone, concept_layer, train_loader
