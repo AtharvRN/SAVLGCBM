@@ -557,9 +557,78 @@ class SpatialSupervisionDataset(Dataset):
         return image, global_concepts, concept_indices, mask_stack, target
 
 
+class CachedSpatialSupervisionDataset(Dataset):
+    def __init__(
+        self,
+        cached_feats,
+        labels: torch.Tensor,
+        global_concept_targets: np.ndarray,
+        mask_entries: List[Dict[int, np.ndarray]],
+        mask_h: int,
+        mask_w: int,
+    ):
+        self.cached_feats = cached_feats
+        self.labels = labels.long()
+        self.global_concept_targets = global_concept_targets.astype(np.float32)
+        self.mask_entries = mask_entries
+        self.mask_h = int(mask_h)
+        self.mask_w = int(mask_w)
+
+    def __len__(self):
+        if isinstance(self.cached_feats, dict):
+            first_key = next(iter(self.cached_feats))
+            return int(self.cached_feats[first_key].shape[0])
+        return int(self.cached_feats.shape[0])
+
+    def __getitem__(self, idx):
+        if isinstance(self.cached_feats, dict):
+            feat_item = {
+                key: value[idx]
+                for key, value in self.cached_feats.items()
+            }
+        else:
+            feat_item = self.cached_feats[idx]
+        target = self.labels[idx]
+        global_concepts = torch.from_numpy(self.global_concept_targets[idx])
+        entry = self.mask_entries[idx]
+        if entry:
+            keys = sorted(entry.keys())
+            concept_indices = torch.tensor(keys, dtype=torch.long)
+            mask_stack = torch.from_numpy(np.stack([entry[k] for k in keys], axis=0).astype(np.float32))
+        else:
+            concept_indices = torch.zeros((0,), dtype=torch.long)
+            mask_stack = torch.zeros((0, self.mask_h, self.mask_w), dtype=torch.float32)
+        return feat_item, global_concepts, concept_indices, mask_stack, target
+
+
+class CachedFeatureLabelDataset(Dataset):
+    def __init__(self, cached_feats, labels: torch.Tensor):
+        self.cached_feats = cached_feats
+        self.labels = labels.long()
+
+    def __len__(self):
+        if isinstance(self.cached_feats, dict):
+            first_key = next(iter(self.cached_feats))
+            return int(self.cached_feats[first_key].shape[0])
+        return int(self.cached_feats.shape[0])
+
+    def __getitem__(self, idx):
+        if isinstance(self.cached_feats, dict):
+            feat_item = {key: value[idx] for key, value in self.cached_feats.items()}
+        else:
+            feat_item = self.cached_feats[idx]
+        return feat_item, self.labels[idx]
+
+
 def collate_spatial_batch(batch):
     images, global_concepts, c_idx, c_mask, labels = zip(*batch)
-    images = torch.stack(images, dim=0)
+    if isinstance(images[0], dict):
+        images = {
+            key: torch.stack([sample[key] for sample in images], dim=0)
+            for key in images[0].keys()
+        }
+    else:
+        images = torch.stack(images, dim=0)
     global_concepts = torch.stack(global_concepts, dim=0)
     labels = torch.tensor(labels, dtype=torch.long)
 
@@ -583,6 +652,118 @@ def collate_spatial_batch(batch):
             mask_pad[i, :k] = mask_i
             valid[i, :k] = True
     return images, global_concepts, idx_pad, mask_pad, valid, labels
+
+
+def _savlg_feature_cache_enabled(args) -> bool:
+    return bool(
+        getattr(args, "use_activation_cache", False)
+        and not bool(getattr(args, "cbl_finetune", False))
+        and float(getattr(args, "crop_to_concept_prob", 0.0)) == 0.0
+    )
+
+
+def _savlg_feature_cache_path(
+    args,
+    base_dataset: Dataset,
+    split_name: str,
+) -> str:
+    cache_dir = os.path.join(
+        getattr(args, "activation_dir", "saved_activations"),
+        "savlg_feature_cache",
+    )
+    os.makedirs(cache_dir, exist_ok=True)
+    if hasattr(base_dataset, "base_dataset") and hasattr(base_dataset, "indices"):
+        root_dataset = base_dataset.base_dataset
+        sample_indices = list(base_dataset.indices)
+    else:
+        root_dataset = base_dataset
+        sample_indices = list(range(len(base_dataset)))
+    dataset_name = getattr(root_dataset, "dataset_name", args.dataset)
+    split_suffix = getattr(root_dataset, "split_suffix", split_name)
+    sample_hash = hashlib.sha1(
+        ",".join(map(str, sample_indices)).encode("utf-8")
+    ).hexdigest()[:16]
+    preprocess_repr = repr(getattr(base_dataset, "preprocess", None))
+    preprocess_hash = hashlib.sha1(preprocess_repr.encode("utf-8")).hexdigest()[:16]
+    metadata = {
+        "dataset": dataset_name,
+        "split": split_suffix,
+        "backbone": args.backbone,
+        "feature_layer": args.feature_layer,
+        "spatial_stage": getattr(args, "savlg_spatial_stage", "conv5"),
+        "branch_arch": getattr(args, "savlg_branch_arch", "shared"),
+        "spatial_branch_mode": getattr(args, "savlg_spatial_branch_mode", "shared_stage"),
+        "global_head_mode": getattr(args, "savlg_global_head_mode", "spatial_pool"),
+        "sample_hash": sample_hash,
+        "preprocess_hash": preprocess_hash,
+        "cache_tag": split_name,
+    }
+    digest = hashlib.sha1(
+        json.dumps(metadata, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    return os.path.join(cache_dir, f"{dataset_name}_{split_suffix}_{digest}.pt")
+
+
+def get_or_create_savlg_feature_cache(
+    args,
+    backbone: SpatialBackbone,
+    dataset: Dataset,
+    split_name: str,
+):
+    cache_path = _savlg_feature_cache_path(args, dataset, split_name)
+    if os.path.exists(cache_path):
+        logger.info("Loading cached SAVLG backbone features from {}", cache_path)
+        return torch.load(cache_path, weights_only=False)
+
+    logger.info("Caching SAVLG backbone features to {}", cache_path)
+    cache_loader_kwargs = {
+        "batch_size": args.cbl_batch_size,
+        "shuffle": False,
+        "num_workers": args.num_workers,
+        "pin_memory": True,
+    }
+    if int(args.num_workers) > 0:
+        cache_loader_kwargs["persistent_workers"] = True
+    loader = DataLoader(dataset, **cache_loader_kwargs)
+    cached_labels = []
+    if savlg_uses_multiscale_branch(args) or savlg_uses_split_stage_dual_branch(args):
+        feat_store: Dict[str, List[torch.Tensor]] = {}
+    else:
+        feat_store = {"__single__": []}
+    with torch.no_grad():
+        for images, labels in tqdm(loader, desc=f"SAVLG feature cache ({split_name})"):
+            images = images.to(args.device)
+            feats = forward_savlg_backbone(backbone, images, args)
+            if isinstance(feats, dict):
+                for key, value in feats.items():
+                    feat_store.setdefault(key, []).append(value.detach().cpu())
+            else:
+                feat_store["__single__"].append(feats.detach().cpu())
+            cached_labels.append(labels.cpu())
+    cached = {
+        "feats": (
+            {key: torch.cat(value, dim=0) for key, value in feat_store.items()}
+            if "__single__" not in feat_store
+            else torch.cat(feat_store["__single__"], dim=0)
+        ),
+        "labels": torch.cat(cached_labels, dim=0),
+    }
+    torch.save(cached, cache_path)
+    return cached
+
+
+def _savlg_batch_already_features(batch_input) -> bool:
+    if isinstance(batch_input, dict):
+        return True
+    if not isinstance(batch_input, torch.Tensor):
+        return False
+    return batch_input.ndim == 4 and int(batch_input.shape[1]) != 3
+
+
+def _move_savlg_feats_to_device(feats, device: str):
+    if isinstance(feats, dict):
+        return {key: value.to(device, non_blocking=True) for key, value in feats.items()}
+    return feats.to(device, non_blocking=True)
 
 
 class SAVLGCBM(nn.Module):
@@ -1064,6 +1245,18 @@ def _outside_mass_penalty(
     return (pred_dist * outside_weight).sum(dim=1)
 
 
+def _coverage_penalty(
+    map_logits: torch.Tensor,
+    mask_targets: torch.Tensor,
+) -> torch.Tensor:
+    pred_prob = torch.sigmoid(map_logits)
+    target_mass = mask_targets.clamp(min=0.0)
+    target_mass_sum = target_mass.sum(dim=1)
+    covered_mass = (pred_prob * target_mass).sum(dim=1)
+    coverage = covered_mass / torch.clamp(target_mass_sum, min=1e-6)
+    return 1.0 - coverage
+
+
 def compute_spatial_losses(
     pooled_logits: torch.Tensor,
     map_logits: torch.Tensor,
@@ -1079,7 +1272,8 @@ def compute_spatial_losses(
     local_trust_weights: Optional[torch.Tensor] = None,
     local_loss_mode: str = "bce",
     outside_penalty_w: float = 0.0,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    coverage_w: float = 0.0,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     global_concept_bce = F.binary_cross_entropy_with_logits(
         pooled_logits, global_concept_targets, reduction="none"
     )
@@ -1100,6 +1294,7 @@ def compute_spatial_losses(
     batch_bce = []
     batch_dice = []
     batch_outside = []
+    batch_coverage = []
     local_loss_mode = str(local_loss_mode).lower()
     for b in range(map_logits.shape[0]):
         valid = mask_valid[b]
@@ -1160,6 +1355,14 @@ def compute_spatial_losses(
                 min=1.0,
             )
             batch_outside.append(outside_loss)
+        if coverage_w > 0.0:
+            coverage_loss = (
+                _coverage_penalty(pred.flatten(1), tgt.flatten(1).to(pred.dtype)) * concept_weights
+            ).sum() / torch.clamp(
+                concept_weights.sum(),
+                min=1.0,
+            )
+            batch_coverage.append(coverage_loss)
 
         if loss_dice_w > 0.0:
             pred_prob = torch.sigmoid(pred)
@@ -1184,6 +1387,10 @@ def compute_spatial_losses(
         loss_outside = torch.stack(batch_outside).mean()
     else:
         loss_outside = map_logits.sum() * 0.0
+    if batch_coverage:
+        loss_coverage = torch.stack(batch_coverage).mean()
+    else:
+        loss_coverage = map_logits.sum() * 0.0
     if local_mil_logits is not None:
         local_bce = F.binary_cross_entropy_with_logits(
             local_mil_logits, global_concept_targets, reduction="none"
@@ -1206,7 +1413,7 @@ def compute_spatial_losses(
         )
     else:
         loss_local_mil = map_logits.sum() * 0.0
-    return loss_global_concept, loss_mask, loss_dice, loss_local_mil, loss_outside
+    return loss_global_concept, loss_mask, loss_dice, loss_local_mil, loss_outside, loss_coverage
 
 
 def compute_refinement_loss(
@@ -1334,12 +1541,17 @@ def train_concept_head(
         for images, global_concepts, idx_pad, mask_pad, valid_pad, _ in tqdm(
             train_loader, desc=f"SAVLG CBL epoch {epoch + 1}"
         ):
-            images = images.to(args.device)
+            if _savlg_batch_already_features(images):
+                feats = _move_savlg_feats_to_device(images, args.device)
+                images_for_teacher = None
+            else:
+                images = images.to(args.device)
+                feats = forward_savlg_backbone(backbone, images, args)
+                images_for_teacher = images
             global_concepts = global_concepts.to(args.device)
             idx_pad = idx_pad.to(args.device)
             mask_pad = mask_pad.to(args.device)
             valid_pad = valid_pad.to(args.device)
-            feats = forward_savlg_backbone(backbone, images, args)
             global_outputs, spatial_maps = forward_savlg_concept_layer(concept_layer, feats)
             _, _, final_logits = compute_savlg_concept_logits(
                 global_outputs,
@@ -1357,7 +1569,7 @@ def train_concept_head(
                     if local_mil_logits is not None
                     else pool_spatial_teacher_logits(spatial_maps, args)
                 )
-            loss_global_concept, loss_mask, loss_dice, loss_local_mil, loss_outside = compute_spatial_losses(
+            loss_global_concept, loss_mask, loss_dice, loss_local_mil, loss_outside, loss_coverage = compute_spatial_losses(
                 final_logits,
                 spatial_maps,
                 global_concepts,
@@ -1372,6 +1584,7 @@ def train_concept_head(
                 local_trust_weights=local_trust_weights,
                 local_loss_mode=str(getattr(args, "savlg_local_loss_mode", "bce")),
                 outside_penalty_w=float(getattr(args, "savlg_outside_penalty_w", 0.0)),
+                coverage_w=float(getattr(args, "savlg_coverage_w", 0.0)),
             )
             loss_refine = spatial_maps.sum() * 0.0
             if refine_weight > 0.0 and epoch >= refine_warmup_epochs:
@@ -1393,8 +1606,12 @@ def train_concept_head(
                 )
             loss_distill = final_logits.sum() * 0.0
             if teacher is not None and distill_weight > 0.0:
+                if images_for_teacher is None:
+                    raise RuntimeError(
+                        "SAVLG teacher distillation is not supported with cached feature batches."
+                    )
                 with torch.no_grad():
-                    teacher_feats = teacher["backbone"](images)
+                    teacher_feats = teacher["backbone"](images_for_teacher)
                     teacher_logits = teacher["concept_layer"](teacher_feats).index_select(
                         1, teacher["indices"]
                     )
@@ -1408,6 +1625,7 @@ def train_concept_head(
                 + float(getattr(args, "loss_dice_w", 0.0)) * loss_dice
                 + float(getattr(args, "loss_local_mil_w", 0.0)) * loss_local_mil
                 + float(getattr(args, "savlg_outside_penalty_w", 0.0)) * loss_outside
+                + float(getattr(args, "savlg_coverage_w", 0.0)) * loss_coverage
                 + refine_weight * loss_refine
                 + consistency_weight * loss_consistency
                 + distill_weight * loss_distill
@@ -1415,19 +1633,24 @@ def train_concept_head(
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            running += float(loss.item()) * images.size(0)
+            running += float(loss.item()) * global_concepts.size(0)
 
         train_loss = running / max(len(train_loader.dataset), 1)
         concept_layer.eval()
         with torch.no_grad():
             val_running = 0.0
             for images, global_concepts, idx_pad, mask_pad, valid_pad, _ in val_loader:
-                images = images.to(args.device)
+                if _savlg_batch_already_features(images):
+                    feats = _move_savlg_feats_to_device(images, args.device)
+                    images_for_teacher = None
+                else:
+                    images = images.to(args.device)
+                    feats = forward_savlg_backbone(backbone, images, args)
+                    images_for_teacher = images
                 global_concepts = global_concepts.to(args.device)
                 idx_pad = idx_pad.to(args.device)
                 mask_pad = mask_pad.to(args.device)
                 valid_pad = valid_pad.to(args.device)
-                feats = forward_savlg_backbone(backbone, images, args)
                 global_outputs, spatial_maps = forward_savlg_concept_layer(concept_layer, feats)
                 _, _, final_logits = compute_savlg_concept_logits(
                     global_outputs,
@@ -1445,7 +1668,7 @@ def train_concept_head(
                         if local_mil_logits is not None
                         else pool_spatial_teacher_logits(spatial_maps, args)
                     )
-                loss_global_concept, loss_mask, loss_dice, loss_local_mil, loss_outside = compute_spatial_losses(
+                loss_global_concept, loss_mask, loss_dice, loss_local_mil, loss_outside, loss_coverage = compute_spatial_losses(
                     final_logits,
                     spatial_maps,
                     global_concepts,
@@ -1460,6 +1683,7 @@ def train_concept_head(
                     local_trust_weights=local_trust_weights,
                     local_loss_mode=str(getattr(args, "savlg_local_loss_mode", "bce")),
                     outside_penalty_w=float(getattr(args, "savlg_outside_penalty_w", 0.0)),
+                    coverage_w=float(getattr(args, "savlg_coverage_w", 0.0)),
                 )
                 loss_refine = spatial_maps.sum() * 0.0
                 if refine_weight > 0.0 and epoch >= refine_warmup_epochs:
@@ -1481,7 +1705,11 @@ def train_concept_head(
                     )
                 loss_distill = final_logits.sum() * 0.0
                 if teacher is not None and distill_weight > 0.0:
-                    teacher_feats = teacher["backbone"](images)
+                    if images_for_teacher is None:
+                        raise RuntimeError(
+                            "SAVLG teacher distillation is not supported with cached feature batches."
+                        )
+                    teacher_feats = teacher["backbone"](images_for_teacher)
                     teacher_logits = teacher["concept_layer"](teacher_feats).index_select(
                         1, teacher["indices"]
                     )
@@ -1495,11 +1723,12 @@ def train_concept_head(
                     + float(getattr(args, "loss_dice_w", 0.0)) * loss_dice
                     + float(getattr(args, "loss_local_mil_w", 0.0)) * loss_local_mil
                     + float(getattr(args, "savlg_outside_penalty_w", 0.0)) * loss_outside
+                    + float(getattr(args, "savlg_coverage_w", 0.0)) * loss_coverage
                     + refine_weight * loss_refine
                     + consistency_weight * loss_consistency
                     + distill_weight * loss_distill
                 )
-                val_running += float(val_loss.item()) * images.size(0)
+                val_running += float(val_loss.item()) * global_concepts.size(0)
             val_loss = val_running / max(len(val_loader.dataset), 1)
         if scheduler is not None:
             scheduler.step()
@@ -1551,8 +1780,11 @@ def extract_global_concepts(
     labels = []
     with torch.no_grad():
         for images, target in tqdm(loader, desc="SAVLG concept extraction"):
-            images = images.to(args.device)
-            feats = forward_savlg_backbone(backbone, images, args)
+            if _savlg_batch_already_features(images):
+                feats = _move_savlg_feats_to_device(images, args.device)
+            else:
+                images = images.to(args.device)
+                feats = forward_savlg_backbone(backbone, images, args)
             global_outputs, spatial_maps = forward_savlg_concept_layer(concept_layer, feats)
             _, _, final_logits = compute_savlg_concept_logits(
                 global_outputs,
@@ -1583,8 +1815,11 @@ def evaluate_savlg_accuracy(
     total = 0
     with torch.no_grad():
         for images, target in tqdm(loader, desc="SAVLG eval", leave=False):
-            images = images.to(args.device)
-            feats = forward_savlg_backbone(backbone, images, args)
+            if _savlg_batch_already_features(images):
+                feats = _move_savlg_feats_to_device(images, args.device)
+            else:
+                images = images.to(args.device)
+                feats = forward_savlg_backbone(backbone, images, args)
             global_outputs, spatial_maps = forward_savlg_concept_layer(concept_layer, feats)
             _, _, final_logits = compute_savlg_concept_logits(
                 global_outputs,
@@ -1662,19 +1897,45 @@ def train_savlg_cbm(args):
         args.mask_h,
         args.mask_w,
     )
+    if _savlg_feature_cache_enabled(args):
+        logger.info(
+            "Using cached SAVLG backbone features for deterministic training because crop_to_concept_prob == 0."
+        )
+        train_cached = get_or_create_savlg_feature_cache(args, backbone, train_dataset, "train")
+        val_cached = get_or_create_savlg_feature_cache(args, backbone, val_dataset, "val")
+        train_supervision_ds = CachedSpatialSupervisionDataset(
+            train_cached["feats"],
+            train_cached["labels"],
+            train_global_concepts,
+            train_mask_entries,
+            args.mask_h,
+            args.mask_w,
+        )
+        val_supervision_ds = CachedSpatialSupervisionDataset(
+            val_cached["feats"],
+            val_cached["labels"],
+            val_global_concepts,
+            val_mask_entries,
+            args.mask_h,
+            args.mask_w,
+        )
+    supervision_loader_kwargs = {
+        "batch_size": args.cbl_batch_size,
+        "num_workers": args.num_workers,
+        "collate_fn": collate_spatial_batch,
+        "pin_memory": True,
+    }
+    if int(args.num_workers) > 0:
+        supervision_loader_kwargs["persistent_workers"] = True
     train_supervision_loader = DataLoader(
         train_supervision_ds,
-        batch_size=args.cbl_batch_size,
         shuffle=True,
-        num_workers=args.num_workers,
-        collate_fn=collate_spatial_batch,
+        **supervision_loader_kwargs,
     )
     val_supervision_loader = DataLoader(
         val_supervision_ds,
-        batch_size=args.cbl_batch_size,
         shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=collate_spatial_batch,
+        **supervision_loader_kwargs,
     )
 
     teacher = _load_savlg_teacher(args, concepts)
@@ -1690,12 +1951,30 @@ def train_savlg_cbm(args):
         teacher=teacher,
     )
 
-    train_loader = DataLoader(
-        train_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
-    )
+    if _savlg_feature_cache_enabled(args):
+        cached_loader_kwargs = {
+            "batch_size": args.cbl_batch_size,
+            "shuffle": False,
+            "num_workers": args.num_workers,
+            "pin_memory": True,
+        }
+        if int(args.num_workers) > 0:
+            cached_loader_kwargs["persistent_workers"] = True
+        train_loader = DataLoader(
+            CachedFeatureLabelDataset(train_cached["feats"], train_cached["labels"]),
+            **cached_loader_kwargs,
+        )
+        val_loader = DataLoader(
+            CachedFeatureLabelDataset(val_cached["feats"], val_cached["labels"]),
+            **cached_loader_kwargs,
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
+        )
+        val_loader = DataLoader(
+            val_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
+        )
     train_concepts, train_labels = extract_global_concepts(args, backbone, concept_layer, train_loader)
     val_concepts, val_labels = extract_global_concepts(args, backbone, concept_layer, val_loader)
 
@@ -1813,6 +2092,7 @@ def train_savlg_cbm(args):
             "loss_dice_w": float(getattr(args, "loss_dice_w", 0.0)),
             "loss_local_mil_w": float(getattr(args, "loss_local_mil_w", 0.0)),
             "outside_penalty_w": float(getattr(args, "savlg_outside_penalty_w", 0.0)),
+            "coverage_w": float(getattr(args, "savlg_coverage_w", 0.0)),
             "global_bce_pos_weight": float(getattr(args, "global_bce_pos_weight", 1.0)),
             "patch_bce_pos_weight": float(getattr(args, "patch_bce_pos_weight", 1.0)),
             "local_bce_pos_weight": float(getattr(args, "local_bce_pos_weight", 1.0)),
