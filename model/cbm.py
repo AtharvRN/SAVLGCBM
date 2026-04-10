@@ -139,8 +139,8 @@ class Backbone(nn.Module):
         def hook(module, input, output):
             self.feature_vals[output.device] = output
 
-        command = "target_model.{}.register_forward_hook(hook)".format(feature_layer)
-        eval(command)
+        target_module = self._resolve_module_path(target_model, feature_layer)
+        target_module.register_forward_hook(hook)
 
         # assign backbone and preprocess
         self.backbone = target_model
@@ -168,6 +168,18 @@ class Backbone(nn.Module):
         with open(os.path.join(load_dir, "args.txt"), "r") as f:
             args = json.load(f)
         return cls(args["backbone"], args["feature_layer"], device)
+
+    @staticmethod
+    def _resolve_module_path(root: nn.Module, path: str) -> nn.Module:
+        module: nn.Module = root
+        for part in path.split("."):
+            if not part:
+                continue
+            if part.isdigit():
+                module = module[int(part)]
+            else:
+                module = getattr(module, part)
+        return module
 
 
 class BackboneCLIP(nn.Module):
@@ -728,3 +740,170 @@ def train_dense_final(
         output_proj["path"][0][key] = -1.0
     output_proj["path"][0]["metrics"] = {"val_accuracy": val_accuracy}
     return output_proj
+
+
+# ---------------------------------------------------------------------------
+# Eval API
+# ---------------------------------------------------------------------------
+
+class VLGCBMEval:
+    """Eval wrapper for VLG CBM: backbone → concept_layer → normalization."""
+
+    def __init__(self, args, concepts, classes, backbone, cbl, norm):
+        self.args = args
+        self.concepts = concepts
+        self.classes = classes
+        self._backbone = backbone
+        self._cbl = cbl
+        self._norm = norm
+        self.load_path = None
+        self.model_name = "vlg_cbm"
+
+    @classmethod
+    def from_pretrained(cls, load_dir, anno=None):
+        import argparse
+        with open(os.path.join(load_dir, "args.txt")) as f:
+            args = argparse.Namespace(**json.load(f))
+        if anno is not None:
+            args.annotation_dir = anno
+        with open(os.path.join(load_dir, "concepts.txt")) as f:
+            concepts = f.read().split("\n")
+        classes = data_utils.get_classes(args.dataset)
+
+        if args.backbone.startswith("clip_"):
+            backbone = BackboneCLIP(args.backbone, device=args.device, use_penultimate=args.use_clip_penultimate)
+        else:
+            backbone = Backbone(args.backbone, args.feature_layer, args.device)
+        if os.path.exists(os.path.join(load_dir, "backbone.pt")):
+            backbone.backbone.load_state_dict(torch.load(os.path.join(load_dir, "backbone.pt")))
+        cbl = ConceptLayer.from_pretrained(load_dir, args.device)
+        norm = NormalizationLayer.from_pretrained(load_dir, args.device)
+
+        model = cls(args, concepts, classes, backbone, cbl, norm)
+        model.load_path = load_dir
+        return model
+
+    def get_concept_activations(self, images):
+        return self._norm(self._cbl(self._backbone(images)))
+
+    def get_data_loaders(self):
+        # Lazy import: data.concept_dataset imports from this module at top level
+        from data.concept_dataset import get_concept_dataloader
+
+        def _make(split, val_split):
+            return get_concept_dataloader(
+                self.args.dataset, split, self.concepts, self._backbone.preprocess,
+                batch_size=self.args.cbl_batch_size, num_workers=self.args.num_workers,
+                shuffle=False, val_split=val_split, seed=self.args.seed,
+                label_dir=self.args.annotation_dir,
+            )
+
+        return _make("train", self.args.val_split), _make("val", self.args.val_split), _make("test", None)
+
+
+class _DelegatedCBMEval:
+    """Thin wrapper that exposes a stable eval API from model/cbm.py.
+
+    Baseline implementations can keep their existing code in methods/* while
+    sparse/localization entrypoints import a single shared loader from here.
+    """
+
+    model_name = "cbm"
+
+    def __init__(self, impl):
+        self._impl = impl
+        self.args = impl.args
+        self.concepts = impl.concepts
+        self.classes = impl.classes
+        self.load_path = getattr(impl, "load_path", None)
+
+    def __getattr__(self, name):
+        return getattr(self._impl, name)
+
+    def get_concept_activations(self, images):
+        return self._impl.get_concept_activations(images)
+
+    def get_data_loaders(self):
+        return self._impl.get_data_loaders()
+
+
+class LFCBMEval(_DelegatedCBMEval):
+    model_name = "lf_cbm"
+
+    @classmethod
+    def from_pretrained(cls, load_dir: str):
+        from methods.lf import LFCBMEval as _Impl
+
+        impl = _Impl.from_pretrained(load_dir)
+        impl.load_path = load_dir
+        return cls(impl)
+
+
+class SALFCBMEval(_DelegatedCBMEval):
+    model_name = "salf_cbm"
+
+    @classmethod
+    def from_pretrained(cls, load_dir: str):
+        from methods.savlg import SALFCBMEval as _Impl
+
+        impl = _Impl.from_pretrained(load_dir)
+        impl.load_path = load_dir
+        return cls(impl)
+
+
+class SAVLGCBMEval(_DelegatedCBMEval):
+    model_name = "savlg_cbm"
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        load_dir: str,
+        cbl_batch_size: Optional[int] = None,
+        saga_batch_size: Optional[int] = None,
+        disable_activation_cache: bool = False,
+        eval_num_workers: Optional[int] = None,
+    ):
+        from methods.savlg import SAVLGCBMEval as _Impl
+
+        impl = _Impl.from_pretrained(
+            load_dir,
+            cbl_batch_size=cbl_batch_size,
+            saga_batch_size=saga_batch_size,
+            disable_activation_cache=disable_activation_cache,
+            eval_num_workers=eval_num_workers,
+        )
+        impl.load_path = load_dir
+        return cls(impl)
+
+
+def load_eval_cbm(
+    load_dir: str,
+    *,
+    annotation_dir: Optional[str] = None,
+    lf_cbm: bool = False,
+    cbl_batch_size: Optional[int] = None,
+    saga_batch_size: Optional[int] = None,
+    disable_activation_cache: bool = False,
+    eval_num_workers: Optional[int] = None,
+):
+    """Load any supported CBM eval wrapper through a single shared entrypoint."""
+
+    with open(os.path.join(load_dir, "args.txt")) as f:
+        args = json.load(f)
+    model_name = "lf_cbm" if lf_cbm else str(args.get("model_name", "vlg_cbm"))
+
+    if model_name == "vlg_cbm":
+        return VLGCBMEval.from_pretrained(load_dir, anno=annotation_dir)
+    if model_name == "lf_cbm":
+        return LFCBMEval.from_pretrained(load_dir)
+    if model_name == "salf_cbm":
+        return SALFCBMEval.from_pretrained(load_dir)
+    if model_name == "savlg_cbm":
+        return SAVLGCBMEval.from_pretrained(
+            load_dir,
+            cbl_batch_size=cbl_batch_size,
+            saga_batch_size=saga_batch_size,
+            disable_activation_cache=disable_activation_cache,
+            eval_num_workers=eval_num_workers,
+        )
+    raise NotImplementedError(f"Unsupported model_name={model_name}.")

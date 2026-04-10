@@ -19,13 +19,29 @@ from data.concept_dataset import get_filtered_concepts_and_counts
 from glm_saga.elasticnet import IndexedTensorDataset
 from methods.common import build_run_dir, save_args, write_artifacts
 from methods.lf import TransformedSubset, subset_targets, use_original_label_free_protocol
-from methods.salf import (
-    RawSubset,
+from methods.salf import RawSubset
+from model.cbm import Backbone, BackboneCLIP, ConceptLayer, train_dense_final, train_sparse_final
+from model.spatial import (
+    DualBranchMixedConceptLayer,
+    MultiScaleSAVLGConceptLayer,
     SpatialBackbone,
+    apply_savlg_global_head,
+    build_savlg_concept_layer,
+    build_savlg_global_head,
     build_single_spatial_concept_layer,
     build_spatial_concept_layer,
+    compute_savlg_concept_logits,
+    forward_savlg_backbone,
+    forward_savlg_concept_layer,
+    pool_concept_maps,
+    pool_global_concept_outputs,
+    pool_local_mil_logits,
+    pool_residual_spatial_logits,
+    savlg_residual_coupling_enabled,
+    savlg_uses_multiscale_branch,
+    savlg_uses_split_stage_dual_branch,
+    savlg_uses_vlg_global_head,
 )
-from model.cbm import Backbone, BackboneCLIP, ConceptLayer, train_dense_final, train_sparse_final
 from PIL import Image
 
 
@@ -784,162 +800,6 @@ class SAVLGCBM(nn.Module):
         return final_logits, spatial_maps
 
 
-def savlg_uses_multiscale_branch(args) -> bool:
-    return str(getattr(args, "savlg_spatial_branch_mode", "shared_stage")).lower() == "multiscale_conv45"
-
-
-def savlg_uses_split_stage_dual_branch(args) -> bool:
-    if savlg_uses_multiscale_branch(args):
-        return False
-    if not savlg_uses_vlg_global_head(args):
-        return False
-    if str(getattr(args, "savlg_branch_arch", "shared")).lower() != "dual":
-        return False
-    return str(getattr(args, "savlg_spatial_stage", "conv5")).lower() != "conv5"
-
-
-def savlg_uses_vlg_global_head(args) -> bool:
-    return str(getattr(args, "savlg_global_head_mode", "spatial_pool")).lower() == "vlg_linear"
-
-
-def build_savlg_global_head(args, in_features: int, n_concepts: int) -> nn.Module:
-    if savlg_uses_vlg_global_head(args):
-        # Match the original VLG-CBM concept path when savlg_global_hidden_layers=0:
-        # GAP over conv5 features followed by a linear concept layer. Optionally
-        # extend this with hidden Linear->BN->ReLU->Linear blocks for ablations.
-        num_hidden = max(0, int(getattr(args, "savlg_global_hidden_layers", 0)))
-        use_bn = bool(getattr(args, "savlg_global_use_batchnorm", False))
-        hidden_dim = int(getattr(args, "savlg_global_hidden_dim", n_concepts) or n_concepts)
-        hidden_dim = max(1, hidden_dim)
-        if num_hidden <= 0:
-            return ConceptLayer(
-                in_features=in_features,
-                out_features=n_concepts,
-                num_hidden=0,
-                bias=True,
-                device=args.device,
-            )
-        layers: List[nn.Module] = [nn.Linear(in_features, hidden_dim, bias=True)]
-        for hidden_idx in range(num_hidden):
-            if use_bn:
-                layers.append(nn.BatchNorm1d(hidden_dim))
-            layers.append(nn.ReLU())
-            out_dim = n_concepts if hidden_idx == num_hidden - 1 else hidden_dim
-            layers.append(nn.Linear(hidden_dim, out_dim, bias=True))
-            hidden_dim = out_dim
-        model = nn.Sequential(*layers).to(args.device)
-        logger.info(model)
-        return model
-    return build_single_spatial_concept_layer(args, in_features, n_concepts)
-
-
-def apply_savlg_global_head(global_layer: nn.Module, feats, args) -> torch.Tensor:
-    if savlg_uses_vlg_global_head(args):
-        if isinstance(feats, dict):
-            feats = feats["conv5"]
-        pooled_feats = feats.mean(dim=[2, 3])
-        return global_layer(pooled_feats)
-    return global_layer(feats)
-
-
-class DualBranchMixedConceptLayer(nn.Module):
-    def __init__(
-        self,
-        global_layer: nn.Module,
-        spatial_layer: nn.Module,
-        args,
-        spatial_stage: Optional[str] = None,
-    ):
-        super().__init__()
-        self.global_layer = global_layer
-        self.spatial_layer = spatial_layer
-        self.args = args
-        self.spatial_stage = str(spatial_stage or getattr(args, "savlg_spatial_stage", "conv5")).lower()
-
-    def _spatial_feats(self, x):
-        if isinstance(x, dict):
-            return x[self.spatial_stage]
-        return x
-
-    def forward(self, x) -> torch.Tensor:
-        return self.spatial_layer(self._spatial_feats(x))
-
-    def forward_global(self, x):
-        return apply_savlg_global_head(self.global_layer, x, self.args)
-
-    def forward_spatial(self, x) -> torch.Tensor:
-        return self.spatial_layer(self._spatial_feats(x))
-
-    def forward_both(self, x) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.forward_global(x), self.forward_spatial(x)
-
-
-class MultiScaleSAVLGConceptLayer(nn.Module):
-    def __init__(self, args, backbone: SpatialBackbone, n_concepts: int):
-        super().__init__()
-        if str(getattr(args, "savlg_branch_arch", "shared")).lower() != "dual":
-            raise ValueError("Multi-scale SAVLG spatial fusion requires savlg_branch_arch='dual'.")
-        if str(getattr(args, "savlg_spatial_stage", "conv5")).lower() != "conv5":
-            raise ValueError("Multi-scale SAVLG spatial fusion keeps the global branch on conv5.")
-
-        conv4_dim = backbone.get_stage_dim("conv4")
-        conv5_dim = backbone.get_stage_dim("conv5")
-        fusion_dim = int(getattr(args, "savlg_multiscale_fusion_dim", conv5_dim) or conv5_dim)
-
-        self.global_layer = build_savlg_global_head(args, conv5_dim, n_concepts)
-        self.conv4_proj = nn.Conv2d(conv4_dim, fusion_dim, kernel_size=1, bias=False).to(args.device)
-        self.conv5_proj = nn.Conv2d(conv5_dim, fusion_dim, kernel_size=1, bias=False).to(args.device)
-        self.spatial_layer = build_single_spatial_concept_layer(args, fusion_dim, n_concepts)
-        self.args = args
-
-    def _fuse_spatial_features(self, feats) -> torch.Tensor:
-        if not isinstance(feats, dict):
-            raise TypeError("MultiScaleSAVLGConceptLayer expects a stage dict with conv4 and conv5 features.")
-        conv4 = feats["conv4"]
-        conv5 = feats["conv5"]
-        conv5_up = F.interpolate(
-            self.conv5_proj(conv5),
-            size=conv4.shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        )
-        fused = self.conv4_proj(conv4) + conv5_up
-        return F.relu(fused, inplace=False)
-
-    def forward(self, feats) -> torch.Tensor:
-        return self.spatial_layer(self._fuse_spatial_features(feats))
-
-    def forward_global(self, feats) -> torch.Tensor:
-        return apply_savlg_global_head(self.global_layer, feats, self.args)
-
-    def forward_spatial(self, feats) -> torch.Tensor:
-        return self.spatial_layer(self._fuse_spatial_features(feats))
-
-    def forward_both(self, feats) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.forward_global(feats), self.forward_spatial(feats)
-
-
-def build_savlg_concept_layer(args, backbone: SpatialBackbone, n_concepts: int) -> nn.Module:
-    if savlg_uses_multiscale_branch(args):
-        return MultiScaleSAVLGConceptLayer(args, backbone, n_concepts).to(args.device)
-    if savlg_uses_vlg_global_head(args):
-        branch_arch = str(getattr(args, "savlg_branch_arch", "shared")).lower()
-        if branch_arch != "dual":
-            raise ValueError("savlg_global_head_mode='vlg_linear' requires savlg_branch_arch='dual'.")
-        spatial_stage = str(getattr(args, "savlg_spatial_stage", "conv5")).lower()
-        return DualBranchMixedConceptLayer(
-            global_layer=build_savlg_global_head(args, backbone.get_stage_dim("conv5"), n_concepts),
-            spatial_layer=build_single_spatial_concept_layer(
-                args,
-                backbone.get_stage_dim(spatial_stage),
-                n_concepts,
-            ),
-            args=args,
-            spatial_stage=spatial_stage,
-        ).to(args.device)
-    return build_spatial_concept_layer(args, backbone.output_dim, n_concepts)
-
-
 def _collect_linear_layers(module: nn.Module) -> List[nn.Linear]:
     return [submodule for submodule in module.modules() if isinstance(submodule, nn.Linear)]
 
@@ -1078,106 +938,6 @@ def maybe_freeze_savlg_global_head(args, concept_layer: nn.Module) -> None:
         num_params += parameter.numel()
     global_layer.eval()
     logger.info("Froze SAVLG global head ({} parameters).", num_params)
-
-
-def forward_savlg_backbone(
-    backbone: SpatialBackbone,
-    images: torch.Tensor,
-    args,
-):
-    if savlg_uses_multiscale_branch(args):
-        return backbone.forward_multistage(images, ("conv4", "conv5"))
-    if savlg_uses_split_stage_dual_branch(args):
-        spatial_stage = str(getattr(args, "savlg_spatial_stage", "conv5")).lower()
-        requested = ("conv5", spatial_stage) if spatial_stage != "conv5" else ("conv5",)
-        return backbone.forward_multistage(images, requested)
-    return backbone(images)
-
-
-def forward_savlg_concept_layer(
-    concept_layer: nn.Module,
-    feats,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    forward_both = getattr(concept_layer, "forward_both", None)
-    if callable(forward_both):
-        global_maps, spatial_maps = forward_both(feats)
-        return global_maps, spatial_maps
-    spatial_maps = concept_layer(feats)
-    return spatial_maps, spatial_maps
-
-
-def pool_global_concept_outputs(outputs: torch.Tensor, args) -> torch.Tensor:
-    if outputs.ndim == 2:
-        return outputs
-    return pool_concept_maps(outputs, args)
-
-
-def pool_concept_maps(maps: torch.Tensor, args) -> torch.Tensor:
-    pooling = str(getattr(args, "savlg_pooling", "avg")).lower()
-    if pooling == "avg":
-        return F.adaptive_avg_pool2d(maps, 1).flatten(1)
-    if pooling != "topk":
-        raise ValueError(f"Unsupported SAVLG pooling mode: {pooling}")
-
-    flat = maps.flatten(2)
-    num_patches = flat.shape[-1]
-    topk_fraction = float(getattr(args, "savlg_topk_fraction", 0.2))
-    topk_fraction = min(max(topk_fraction, 0.0), 1.0)
-    k = max(1, int(math.ceil(num_patches * topk_fraction)))
-    values, _ = flat.topk(k=k, dim=-1)
-    return values.mean(dim=-1)
-
-
-def pool_local_mil_logits(map_logits: torch.Tensor, args) -> torch.Tensor:
-    pooling = str(getattr(args, "savlg_local_pooling", "lse")).lower()
-    flat = map_logits.flatten(2)
-    if pooling == "lse":
-        temperature = float(getattr(args, "savlg_mil_temperature", 1.0))
-        temperature = max(temperature, 1e-6)
-        num_patches = flat.shape[-1]
-        pooled = temperature * torch.logsumexp(flat / temperature, dim=-1)
-        return pooled - temperature * math.log(max(num_patches, 1))
-    if pooling == "topk":
-        num_patches = flat.shape[-1]
-        topk_fraction = float(getattr(args, "savlg_mil_topk_fraction", 0.2))
-        topk_fraction = min(max(topk_fraction, 0.0), 1.0)
-        k = max(1, int(math.ceil(num_patches * topk_fraction)))
-        values, _ = flat.topk(k=k, dim=-1)
-        return values.mean(dim=-1)
-    raise ValueError(f"Unsupported SAVLG local MIL pooling mode: {pooling}")
-
-
-def savlg_residual_coupling_enabled(args) -> bool:
-    return abs(float(getattr(args, "savlg_residual_spatial_alpha", 0.0))) > 0.0
-
-
-def pool_residual_spatial_logits(map_logits: torch.Tensor, args) -> torch.Tensor:
-    pooling = str(getattr(args, "savlg_residual_spatial_pooling", "lse")).lower()
-    if pooling != "lse":
-        raise ValueError(
-            f"Unsupported SAVLG residual spatial pooling mode: {pooling}. "
-            "This stage allows only lse."
-        )
-    flat = map_logits.flatten(2)
-    temperature = float(getattr(args, "savlg_mil_temperature", 1.0))
-    temperature = max(temperature, 1e-6)
-    num_patches = flat.shape[-1]
-    pooled = temperature * torch.logsumexp(flat / temperature, dim=-1)
-    return pooled - temperature * math.log(max(num_patches, 1))
-
-
-def compute_savlg_concept_logits(
-    global_outputs: torch.Tensor,
-    spatial_maps: torch.Tensor,
-    args,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    global_logits = pool_global_concept_outputs(global_outputs, args)
-    if savlg_residual_coupling_enabled(args):
-        spatial_logits = pool_residual_spatial_logits(spatial_maps, args)
-        final_logits = global_logits + float(getattr(args, "savlg_residual_spatial_alpha", 0.0)) * spatial_logits
-        return global_logits, spatial_logits, final_logits
-    spatial_logits = torch.zeros_like(global_logits)
-    return global_logits, spatial_logits, global_logits
 
 
 def pool_spatial_teacher_logits(map_logits: torch.Tensor, args) -> torch.Tensor:
@@ -2184,4 +1944,160 @@ def train_savlg_cbm(args):
         val_accuracy,
         test_accuracy,
     )
-    return save_dir
+
+
+# ---------------------------------------------------------------------------
+# Eval API
+# ---------------------------------------------------------------------------
+
+class SALFCBMEval:
+    """Eval wrapper for Spatial Attention Label-Free CBM."""
+
+    def __init__(self, args, concepts, classes, backbone, concept_layer, mean, std):
+        self.args = args
+        self.concepts = concepts
+        self.classes = classes
+        self._backbone = backbone
+        self._concept_layer = concept_layer
+        self._mean = mean
+        self._std = std
+
+    @classmethod
+    def from_pretrained(cls, load_dir):
+        import argparse
+
+        with open(os.path.join(load_dir, "args.txt")) as f:
+            args = argparse.Namespace(**json.load(f))
+        with open(os.path.join(load_dir, "concepts.txt")) as f:
+            concepts = f.read().split("\n")
+        classes = data_utils.get_classes(args.dataset)
+
+        backbone = SpatialBackbone(args.backbone, device=args.device)
+        concept_layer_state = torch.load(
+            os.path.join(load_dir, "concept_layer.pt"), map_location=args.device
+        )
+        # Older SALF checkpoints may store a plain 1x1 conv weight without bias.
+        # Recreate that exact layer shape instead of forcing the current default.
+        if (
+            getattr(args, "cbl_type", "linear") == "linear"
+            and list(concept_layer_state.keys()) == ["weight"]
+        ):
+            concept_layer = nn.Conv2d(
+                backbone.output_dim,
+                len(concepts),
+                kernel_size=1,
+                bias=False,
+            ).to(args.device)
+        else:
+            concept_layer = build_savlg_concept_layer(args, backbone, len(concepts))
+        concept_layer.load_state_dict(concept_layer_state)
+        mean = torch.load(os.path.join(load_dir, "proj_mean.pt"), map_location=args.device)
+        std = torch.load(os.path.join(load_dir, "proj_std.pt"), map_location=args.device)
+
+        return cls(args, concepts, classes, backbone, concept_layer, mean, std)
+
+    def get_concept_activations(self, images):
+        maps = self._concept_layer(self._backbone(images))
+        raw = F.adaptive_avg_pool2d(maps, 1).flatten(1)
+        return (raw - self._mean) / self._std
+
+    def get_data_loaders(self):
+        if use_original_label_free_protocol(self.args):
+            train_ds = data_utils.get_data(f"{self.args.dataset}_train", preprocess=self._backbone.preprocess)
+            test_ds = data_utils.get_data(f"{self.args.dataset}_val", preprocess=self._backbone.preprocess)
+        else:
+            base = data_utils.get_data(f"{self.args.dataset}_train", preprocess=None)
+            n_val = int(self.args.val_split * len(base))
+            gen = torch.Generator().manual_seed(self.args.seed)
+            train_idx, _ = torch.utils.data.random_split(
+                list(range(len(base))), [len(base) - n_val, n_val], generator=gen
+            )
+            train_ds = TransformedSubset(base, train_idx.indices, self._backbone.preprocess)
+            base_test = data_utils.get_data(f"{self.args.dataset}_val", preprocess=None)
+            test_ds = TransformedSubset(base_test, list(range(len(base_test))), self._backbone.preprocess)
+
+        def _make(ds):
+            return DataLoader(ds, batch_size=self.args.cbl_batch_size, shuffle=False, num_workers=self.args.num_workers)
+
+        return _make(train_ds), None, _make(test_ds)
+
+
+class SAVLGCBMEval:
+    """Eval wrapper for Spatial Attention VLG CBM."""
+
+    def __init__(self, args, concepts, classes, backbone, concept_layer, mean, std, train_ds, val_ds, test_ds, num_workers):
+        self.args = args
+        self.concepts = concepts
+        self.classes = classes
+        self._backbone = backbone
+        self._concept_layer = concept_layer
+        self._mean = mean
+        self._std = std
+        self._train_ds = train_ds
+        self._val_ds = val_ds
+        self._test_ds = test_ds
+        self._num_workers = num_workers
+
+    @classmethod
+    def from_pretrained(cls, load_dir, cbl_batch_size=None, saga_batch_size=None, disable_activation_cache=False, eval_num_workers=None):
+        import argparse
+
+        with open(os.path.join(load_dir, "args.txt")) as f:
+            args = argparse.Namespace(**json.load(f))
+        if cbl_batch_size is not None:
+            args.cbl_batch_size = cbl_batch_size
+        if saga_batch_size is not None:
+            args.saga_batch_size = saga_batch_size
+        if not hasattr(args, "use_activation_cache"):
+            args.use_activation_cache = not bool(getattr(args, "disable_activation_cache", False))
+        if disable_activation_cache:
+            args.use_activation_cache = False
+            args.disable_activation_cache = True
+
+        with open(os.path.join(load_dir, "concepts.txt")) as f:
+            concepts = f.read().split("\n")
+        classes = data_utils.get_classes(args.dataset)
+
+        _, _, train_ds, val_ds, test_ds, backbone = create_savlg_splits(args)
+        concept_layer = build_savlg_concept_layer(args, backbone, len(concepts))
+        concept_layer.load_state_dict(
+            torch.load(os.path.join(load_dir, "concept_layer.pt"), map_location=args.device)
+        )
+        mean = torch.load(os.path.join(load_dir, "proj_mean.pt"), map_location=args.device)
+        std = torch.load(os.path.join(load_dir, "proj_std.pt"), map_location=args.device)
+
+        num_workers = int(
+            eval_num_workers
+            if eval_num_workers is not None
+            else int(getattr(args, "num_workers", 0))
+        )
+
+        return cls(args, concepts, classes, backbone, concept_layer, mean, std, train_ds, val_ds, test_ds, num_workers)
+
+    def get_concept_activations(self, images):
+        if isinstance(images, dict):
+            feats = images  # cached backbone features, already on device
+        elif isinstance(images, torch.Tensor) and images.ndim == 4 and int(images.shape[1]) != 3:
+            feats = images  # pre-computed spatial feature maps
+        else:
+            feats = forward_savlg_backbone(self._backbone, images, self.args)
+        global_out, spatial_maps = forward_savlg_concept_layer(self._concept_layer, feats)
+        _, _, logits = compute_savlg_concept_logits(global_out, spatial_maps, self.args)
+        return (logits - self._mean) / self._std
+
+    def get_data_loaders(self):
+        def _make(ds, split_name):
+            if _savlg_feature_cache_enabled(self.args):
+                cached = get_or_create_savlg_feature_cache(self.args, self._backbone, ds, split_name)
+                ds = CachedFeatureLabelDataset(cached["feats"], cached["labels"])
+                return DataLoader(ds, batch_size=self.args.cbl_batch_size, shuffle=False, num_workers=0)
+            return DataLoader(
+                ds,
+                batch_size=self.args.cbl_batch_size,
+                shuffle=False,
+                num_workers=self._num_workers,
+                pin_memory=self.args.device.startswith("cuda"),
+                persistent_workers=self._num_workers > 0,
+            )
+
+        return _make(self._train_ds, "train"), _make(self._val_ds, "val"), _make(self._test_ds, "test")

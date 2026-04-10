@@ -19,14 +19,28 @@ from methods.common import build_run_dir, save_args, write_artifacts
 from model.cbm import Backbone, BackboneCLIP, train_dense_final, train_sparse_final
 
 
+def subset_targets(base_dataset: Dataset, indices: Iterable[int]) -> torch.Tensor:
+    indices = list(indices)
+    raw_targets = None
+    if hasattr(base_dataset, "targets"):
+        raw_targets = base_dataset.targets
+    elif hasattr(base_dataset, "samples"):
+        raw_targets = [target for _, target in base_dataset.samples]
+    elif hasattr(base_dataset, "imgs"):
+        raw_targets = [target for _, target in base_dataset.imgs]
+
+    if raw_targets is None:
+        return torch.tensor([base_dataset[idx][1] for idx in indices], dtype=torch.long)
+
+    return torch.tensor([int(raw_targets[idx]) for idx in indices], dtype=torch.long)
+
+
 class TransformedSubset(Dataset):
     def __init__(self, base_dataset: Dataset, indices: Iterable[int], transform):
         self.base_dataset = base_dataset
         self.indices = list(indices)
         self.transform = transform
-        self.targets = torch.tensor(
-            [base_dataset[idx][1] for idx in self.indices], dtype=torch.long
-        )
+        self.targets = subset_targets(base_dataset, self.indices)
 
     def __len__(self):
         return len(self.indices)
@@ -44,6 +58,7 @@ class DualTransformSubset(Dataset):
         self.indices = list(indices)
         self.transform_a = transform_a
         self.transform_b = transform_b
+        self.targets = subset_targets(base_dataset, self.indices)
 
     def __len__(self):
         return len(self.indices)
@@ -88,10 +103,71 @@ class ProjectionArtifacts:
     linear_weight: torch.Tensor | None
 
 
-def cos_similarity_cubed(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    a_norm = F.normalize(a, dim=0)
-    b_norm = F.normalize(b, dim=0)
-    return ((a_norm * b_norm).sum(dim=0)) ** 3
+def cos_similarity_cubed(
+    clip_feats: torch.Tensor,
+    target_feats: torch.Tensor,
+    min_norm: float = 1e-3,
+) -> torch.Tensor:
+    # Match the original Label-free-CBM similarity exactly:
+    # center each concept dimension over examples, cube features, then cosine.
+    clip_feats = clip_feats.float()
+    target_feats = target_feats.float()
+
+    clip_feats = clip_feats - torch.mean(clip_feats, dim=0, keepdim=True)
+    target_feats = target_feats - torch.mean(target_feats, dim=0, keepdim=True)
+
+    clip_feats = clip_feats**3
+    target_feats = target_feats**3
+
+    clip_feats = clip_feats / torch.clamp(
+        torch.norm(clip_feats, p=2, dim=0, keepdim=True),
+        min=min_norm,
+    )
+    target_feats = target_feats / torch.clamp(
+        torch.norm(target_feats, p=2, dim=0, keepdim=True),
+        min=min_norm,
+    )
+    return torch.sum(target_feats * clip_feats, dim=0)
+
+
+def use_original_label_free_protocol(args) -> bool:
+    return bool(getattr(args, "lf_original_protocol", False))
+
+
+def get_lf_clip_name(args) -> str:
+    clip_name = getattr(args, "lf_clip_name", None)
+    if clip_name:
+        return clip_name.replace("clip_", "")
+    if use_original_label_free_protocol(args):
+        return "ViT-B/16"
+    return "RN50"
+
+
+def get_lf_concepts(args):
+    if not use_original_label_free_protocol(args):
+        return data_utils.get_concepts(args.concept_set, args.filter_set)
+
+    # Match the original Label-free-CBM repo exactly: read concepts verbatim,
+    # without normalization, deduplication, or whitespace canonicalization.
+    with open(args.concept_set, "r") as f:
+        concepts = f.read().split("\n")
+
+    if args.filter_set and os.path.exists(args.filter_set):
+        with open(args.filter_set, "r") as f:
+            to_filter = set(f.read().split("\n"))
+        concepts = [concept for concept in concepts if concept not in to_filter]
+
+    return concepts
+
+
+def build_lf_backbone(args):
+    if args.backbone.startswith("clip_"):
+        return BackboneCLIP(
+            args.backbone,
+            use_penultimate=args.use_clip_penultimate,
+            device=args.device,
+        )
+    return Backbone(args.backbone, args.feature_layer, args.device)
 
 
 def make_projection_layer(args, input_dim: int, n_concepts: int) -> nn.Module:
@@ -157,6 +233,7 @@ def train_projection_layer(
     best_state = {k: v.detach().cpu().clone() for k, v in proj_layer.state_dict().items()}
     best_step = 0
     no_improve_evals = 0
+    patience = max(0, int(args.proj_early_stop_patience))
     batch_size = min(args.proj_batch_size, len(train_backbone_features))
     eval_every = max(1, int(args.proj_eval_every))
 
@@ -165,7 +242,7 @@ def train_projection_layer(
         batch_idx = torch.LongTensor(random.sample(indices, batch_size))
         proj_out = proj_layer(train_backbone_features[batch_idx].to(args.device))
         target = train_clip_features[batch_idx].to(args.device)
-        loss = -cos_similarity_cubed(proj_out.T, target.T).mean()
+        loss = -cos_similarity_cubed(target, proj_out).mean()
 
         optimizer.zero_grad()
         loss.backward()
@@ -176,8 +253,8 @@ def train_projection_layer(
             with torch.no_grad():
                 val_out = proj_layer(val_backbone_features.to(args.device))
                 val_loss = -cos_similarity_cubed(
-                    val_out.T,
-                    val_clip_features.to(args.device).T,
+                    val_clip_features.to(args.device),
+                    val_out,
                 ).mean()
                 val_loss_value = float(val_loss.item())
             proj_layer.train()
@@ -189,12 +266,11 @@ def train_projection_layer(
                 }
                 best_step = step
                 no_improve_evals = 0
-            elif val_loss_value > (best_val_loss + args.proj_min_delta):
+            else:
                 no_improve_evals += 1
                 if (
-                    args.proj_early_stop_patience > 0
-                    and step >= args.proj_min_steps_before_early_stop
-                    and no_improve_evals > args.proj_early_stop_patience
+                    step >= args.proj_min_steps_before_early_stop
+                    and no_improve_evals > patience
                 ):
                     break
 
@@ -211,6 +287,38 @@ def train_projection_layer(
 
 
 def create_splits(args):
+    backbone = build_lf_backbone(args)
+
+    clip_model, clip_preprocess = clip.load(
+        get_lf_clip_name(args),
+        device=args.device,
+    )
+    clip_model = clip_model.float().eval()
+
+    if use_original_label_free_protocol(args):
+        base_train = data_utils.get_data(f"{args.dataset}_train", None)
+        base_val = data_utils.get_data(f"{args.dataset}_val", None)
+        train_indices = list(range(len(base_train)))
+        val_indices = list(range(len(base_val)))
+        train_dataset = DualTransformSubset(
+            base_train,
+            train_indices,
+            backbone.preprocess,
+            clip_preprocess,
+        )
+        val_dataset = DualTransformSubset(
+            base_val,
+            val_indices,
+            backbone.preprocess,
+            clip_preprocess,
+        )
+        test_dataset = TransformedSubset(
+            base_val,
+            val_indices,
+            backbone.preprocess,
+        )
+        return train_dataset, val_dataset, test_dataset, backbone, clip_model
+
     base_train = data_utils.get_data(f"{args.dataset}_train", None)
     total = len(base_train)
     n_val = int(args.val_split * total)
@@ -221,21 +329,6 @@ def create_splits(args):
         [n_train, n_val],
         generator=generator,
     )
-
-    if args.backbone.startswith("clip_"):
-        backbone = BackboneCLIP(
-            args.backbone,
-            use_penultimate=args.use_clip_penultimate,
-            device=args.device,
-        )
-    else:
-        backbone = Backbone(args.backbone, args.feature_layer, args.device)
-
-    clip_model, clip_preprocess = clip.load(
-        (args.lf_clip_name or "clip_RN50").replace("clip_", ""),
-        device=args.device,
-    )
-    clip_model = clip_model.float().eval()
 
     train_dataset = DualTransformSubset(
         base_train,
@@ -328,7 +421,7 @@ def train_lf_cbm(args):
     save_args(args, save_dir)
 
     classes = data_utils.get_classes(args.dataset)
-    raw_concepts = data_utils.get_concepts(args.concept_set, args.filter_set)
+    raw_concepts = get_lf_concepts(args)
     train_dataset, val_dataset, test_dataset, backbone, clip_model = create_splits(args)
 
     tokens = clip.tokenize([str(concept) for concept in raw_concepts]).to(args.device)
@@ -372,7 +465,7 @@ def train_lf_cbm(args):
     with torch.no_grad():
         val_proj = proj_layer(val_backbone.to(args.device))
         interpretable = (
-            cos_similarity_cubed(val_proj, val_clip_sim.to(args.device))
+            cos_similarity_cubed(val_clip_sim.to(args.device), val_proj)
             > args.interpretability_cutoff
         )
 
@@ -435,16 +528,24 @@ def train_lf_cbm(args):
     b_g = output_proj["path"][0]["bias"]
     final_layer.load_state_dict({"weight": W_g, "bias": b_g})
 
-    train_eval_dataset = TransformedSubset(
-        data_utils.get_data(f"{args.dataset}_train", None),
-        train_dataset.indices,
-        backbone.preprocess,
-    )
-    val_eval_dataset = TransformedSubset(
-        data_utils.get_data(f"{args.dataset}_train", None),
-        val_dataset.indices,
-        backbone.preprocess,
-    )
+    if use_original_label_free_protocol(args):
+        train_eval_dataset = TransformedSubset(
+            data_utils.get_data(f"{args.dataset}_train", None),
+            list(range(len(train_dataset))),
+            backbone.preprocess,
+        )
+        val_eval_dataset = test_dataset
+    else:
+        train_eval_dataset = TransformedSubset(
+            data_utils.get_data(f"{args.dataset}_train", None),
+            train_dataset.indices,
+            backbone.preprocess,
+        )
+        val_eval_dataset = TransformedSubset(
+            data_utils.get_data(f"{args.dataset}_train", None),
+            val_dataset.indices,
+            backbone.preprocess,
+        )
 
     train_accuracy = evaluate_accuracy(
         backbone,
@@ -495,6 +596,20 @@ def train_lf_cbm(args):
         json.dump(val_metrics, f, indent=2)
     with open(os.path.join(save_dir, "test_metrics.json"), "w") as f:
         json.dump(test_metrics, f, indent=2)
+    metrics_payload = {}
+    path0 = output_proj["path"][0]
+    for key in ("lam", "lr", "alpha", "time"):
+        metrics_payload[key] = float(path0[key])
+    metrics_payload["metrics"] = path0["metrics"]
+    nnz = int((W_g.abs() > 1e-5).sum().item())
+    total = int(W_g.numel())
+    metrics_payload["sparsity"] = {
+        "Non-zero weights": nnz,
+        "Total weights": total,
+        "Percentage non-zero": nnz / max(total, 1),
+    }
+    with open(os.path.join(save_dir, "metrics.txt"), "w") as f:
+        json.dump(metrics_payload, f, indent=2)
 
     W_g_np = W_g.detach().cpu().numpy()
     interpretations = {}
@@ -515,8 +630,11 @@ def train_lf_cbm(args):
 
     method_log = {
         "cbm_variant": "lf_cbm",
+        "protocol": (
+            "label_free_cbm_original" if use_original_label_free_protocol(args) else "unified_adaptation"
+        ),
         "concept_pseudo_label_source": "clip_image_text_cosine",
-        "clip_name": args.lf_clip_name,
+        "clip_name": get_lf_clip_name(args),
         "concept_filters": {
             "clip_cutoff": args.clip_cutoff,
             "interpretability_cutoff": args.interpretability_cutoff,
@@ -549,4 +667,52 @@ def train_lf_cbm(args):
         },
     )
     logger.info(f"LF-CBM train accuracy={train_accuracy:.4f} val accuracy={val_accuracy:.4f} test accuracy={test_accuracy:.4f}")
-    return save_dir
+
+
+# ---------------------------------------------------------------------------
+# Eval API
+# ---------------------------------------------------------------------------
+
+class LFCBMEval:
+    """Eval wrapper for Label-Free CBM."""
+
+    def __init__(self, args, concepts, classes, cbm):
+        self.args = args
+        self.concepts = concepts
+        self.classes = classes
+        self._cbm = cbm
+
+    @classmethod
+    def from_pretrained(cls, load_dir):
+        import argparse
+        from model.cbm import load_cbm
+
+        with open(os.path.join(load_dir, "args.txt")) as f:
+            args = argparse.Namespace(**json.load(f))
+        # Normalise attribute names across old checkpoints
+        if not hasattr(args, "batch_size"):
+            args.batch_size = getattr(args, "lf_batch_size", getattr(args, "cbl_batch_size", 64))
+        if not hasattr(args, "saga_batch_size"):
+            args.saga_batch_size = getattr(args, "batch_size", 256)
+        if not hasattr(args, "saga_n_iters"):
+            args.saga_n_iters = getattr(args, "n_iters", 500)
+
+        with open(os.path.join(load_dir, "concepts.txt")) as f:
+            concepts = f.read().split("\n")
+        classes = data_utils.get_classes(args.dataset)
+
+        cbm = load_cbm(load_dir, args.device)
+        cbm.eval()
+
+        return cls(args, concepts, classes, cbm)
+
+    def get_concept_activations(self, images):
+        _, concept_activations = self._cbm(images)
+        return concept_activations
+
+    def get_data_loaders(self):
+        def _make(split):
+            ds = data_utils.get_data(f"{self.args.dataset}_{split}", preprocess=self._cbm.preprocess)
+            return DataLoader(ds, batch_size=self.args.batch_size, shuffle=False, num_workers=8)
+
+        return _make("train"), None, _make("val")

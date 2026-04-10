@@ -990,6 +990,12 @@ def main():
         help="Weight for penalizing normalized SAVLG spatial activation mass outside the GT box",
     )
     parser.add_argument(
+        "--savlg_coverage_w",
+        type=float,
+        default=0.0,
+        help="Weight for encouraging SAVLG activation coverage over the GT box region",
+    )
+    parser.add_argument(
         "--patch_iou_thresh",
         type=float,
         default=0.5,
@@ -1057,11 +1063,8 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    if args.model_name == "vlg_cbm":
-        _ = train_cbm_and_save(args)
-    else:
-        train_handler = get_train_handler(args.model_name)
-        _ = train_handler(args)
+    train_handler = get_train_handler(args.model_name)
+    _ = train_handler(args)
 
 
 if __name__ == "__main__":
