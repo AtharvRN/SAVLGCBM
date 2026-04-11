@@ -446,24 +446,28 @@ def train_lf_cbm(args):
         backbone.preprocess,
     )
 
-    train_accuracy = evaluate_accuracy(
-        backbone,
-        proj_layer,
-        train_mean,
-        train_std,
-        final_layer,
-        train_eval_dataset,
-        args,
-    )
-    val_accuracy = evaluate_accuracy(
-        backbone,
-        proj_layer,
-        train_mean,
-        train_std,
-        final_layer,
-        val_eval_dataset,
-        args,
-    )
+    if getattr(args, "skip_train_val_eval", False):
+        train_accuracy = None
+        val_accuracy = None
+    else:
+        train_accuracy = evaluate_accuracy(
+            backbone,
+            proj_layer,
+            train_mean,
+            train_std,
+            final_layer,
+            train_eval_dataset,
+            args,
+        )
+        val_accuracy = evaluate_accuracy(
+            backbone,
+            proj_layer,
+            train_mean,
+            train_std,
+            final_layer,
+            val_eval_dataset,
+            args,
+        )
     test_accuracy = evaluate_accuracy(
         backbone,
         proj_layer,
@@ -486,15 +490,16 @@ def train_lf_cbm(args):
     torch.save(train_mean, os.path.join(save_dir, "proj_mean.pt"))
     torch.save(train_std, os.path.join(save_dir, "proj_std.pt"))
 
-    train_metrics = {"accuracy": train_accuracy}
-    val_metrics = {"accuracy": val_accuracy}
     test_metrics = {"accuracy": test_accuracy}
-    with open(os.path.join(save_dir, "train_metrics.json"), "w") as f:
-        json.dump(train_metrics, f, indent=2)
-    with open(os.path.join(save_dir, "val_metrics.json"), "w") as f:
-        json.dump(val_metrics, f, indent=2)
     with open(os.path.join(save_dir, "test_metrics.json"), "w") as f:
         json.dump(test_metrics, f, indent=2)
+    if not getattr(args, "skip_train_val_eval", False):
+        train_metrics = {"accuracy": train_accuracy}
+        val_metrics = {"accuracy": val_accuracy}
+        with open(os.path.join(save_dir, "train_metrics.json"), "w") as f:
+            json.dump(train_metrics, f, indent=2)
+        with open(os.path.join(save_dir, "val_metrics.json"), "w") as f:
+            json.dump(val_metrics, f, indent=2)
 
     W_g_np = W_g.detach().cpu().numpy()
     interpretations = {}
@@ -548,5 +553,10 @@ def train_lf_cbm(args):
             "sparse_eval_style": "lf_linear_only" if artifacts.linear_weight is not None else "not_yet_supported",
         },
     )
-    logger.info(f"LF-CBM train accuracy={train_accuracy:.4f} val accuracy={val_accuracy:.4f} test accuracy={test_accuracy:.4f}")
+    if getattr(args, "skip_train_val_eval", False):
+        logger.info(f"LF-CBM test accuracy={test_accuracy:.4f}")
+    else:
+        logger.info(
+            f"LF-CBM train accuracy={train_accuracy:.4f} val accuracy={val_accuracy:.4f} test accuracy={test_accuracy:.4f}"
+        )
     return save_dir

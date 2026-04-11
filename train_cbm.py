@@ -358,6 +358,8 @@ def train_cbm_and_save(args):
             "Total weights": total,
             "Percentage non-zero": nnz / total,
         }
+        out_dict["skip_train_val_eval"] = bool(getattr(args, "skip_train_val_eval", False))
+        out_dict["dense_eval_splits"] = ["test"]
         json.dump(out_dict, f, indent=2)
 
     utils.write_parameters_tensorboard(

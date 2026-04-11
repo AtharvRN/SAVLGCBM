@@ -752,6 +752,50 @@ def get_or_create_savlg_feature_cache(
     return cached
 
 
+def build_savlg_feature_cache_in_memory(
+    args,
+    backbone: SpatialBackbone,
+    dataset: Dataset,
+    split_name: str,
+):
+    logger.info(
+        "Building SAVLG backbone features in memory for deterministic training ({})",
+        split_name,
+    )
+    cache_loader_kwargs = {
+        "batch_size": args.cbl_batch_size,
+        "shuffle": False,
+        "num_workers": args.num_workers,
+        "pin_memory": True,
+    }
+    if int(args.num_workers) > 0:
+        cache_loader_kwargs["persistent_workers"] = True
+    loader = DataLoader(dataset, **cache_loader_kwargs)
+    cached_labels = []
+    if savlg_uses_multiscale_branch(args) or savlg_uses_split_stage_dual_branch(args):
+        feat_store: Dict[str, List[torch.Tensor]] = {}
+    else:
+        feat_store = {"__single__": []}
+    with torch.no_grad():
+        for images, labels in tqdm(loader, desc=f"SAVLG feature cache ({split_name})"):
+            images = images.to(args.device)
+            feats = forward_savlg_backbone(backbone, images, args)
+            if isinstance(feats, dict):
+                for key, value in feats.items():
+                    feat_store.setdefault(key, []).append(value.detach().cpu())
+            else:
+                feat_store["__single__"].append(feats.detach().cpu())
+            cached_labels.append(labels.cpu())
+    return {
+        "feats": (
+            {key: torch.cat(value, dim=0) for key, value in feat_store.items()}
+            if "__single__" not in feat_store
+            else torch.cat(feat_store["__single__"], dim=0)
+        ),
+        "labels": torch.cat(cached_labels, dim=0),
+    }
+
+
 def _savlg_batch_already_features(batch_input) -> bool:
     if isinstance(batch_input, dict):
         return True
@@ -1899,10 +1943,14 @@ def train_savlg_cbm(args):
     )
     if _savlg_feature_cache_enabled(args):
         logger.info(
-            "Using cached SAVLG backbone features for deterministic training because crop_to_concept_prob == 0."
+            "Using in-memory SAVLG backbone features for deterministic training because crop_to_concept_prob == 0."
         )
-        train_cached = get_or_create_savlg_feature_cache(args, backbone, train_dataset, "train")
-        val_cached = get_or_create_savlg_feature_cache(args, backbone, val_dataset, "val")
+        train_cached = build_savlg_feature_cache_in_memory(
+            args, backbone, train_dataset, "train"
+        )
+        val_cached = build_savlg_feature_cache_in_memory(
+            args, backbone, val_dataset, "val"
+        )
         train_supervision_ds = CachedSpatialSupervisionDataset(
             train_cached["feats"],
             train_cached["labels"],
@@ -2020,12 +2068,16 @@ def train_savlg_cbm(args):
     b_g = output_proj["path"][0]["bias"]
     final_layer.load_state_dict({"weight": W_g, "bias": b_g})
 
-    train_accuracy = evaluate_savlg_accuracy(
-        args, backbone, concept_layer, train_mean, train_std, final_layer, train_dataset
-    )
-    val_accuracy = evaluate_savlg_accuracy(
-        args, backbone, concept_layer, train_mean, train_std, final_layer, val_dataset
-    )
+    if getattr(args, "skip_train_val_eval", False):
+        train_accuracy = None
+        val_accuracy = None
+    else:
+        train_accuracy = evaluate_savlg_accuracy(
+            args, backbone, concept_layer, train_mean, train_std, final_layer, train_dataset
+        )
+        val_accuracy = evaluate_savlg_accuracy(
+            args, backbone, concept_layer, train_mean, train_std, final_layer, val_dataset
+        )
     test_accuracy = evaluate_savlg_accuracy(
         args, backbone, concept_layer, train_mean, train_std, final_layer, test_dataset
     )
@@ -2038,14 +2090,15 @@ def train_savlg_cbm(args):
     torch.save(train_mean, os.path.join(save_dir, "proj_mean.pt"))
     torch.save(train_std, os.path.join(save_dir, "proj_std.pt"))
 
-    train_metrics = {"accuracy": train_accuracy}
-    val_metrics = {"accuracy": val_accuracy}
     test_metrics = {"accuracy": test_accuracy}
-    for filename, payload in (
-        ("train_metrics.json", train_metrics),
-        ("val_metrics.json", val_metrics),
-        ("test_metrics.json", test_metrics),
-    ):
+    metrics_to_write = [("test_metrics.json", test_metrics)]
+    if not getattr(args, "skip_train_val_eval", False):
+        metrics_to_write = [
+            ("train_metrics.json", {"accuracy": train_accuracy}),
+            ("val_metrics.json", {"accuracy": val_accuracy}),
+            ("test_metrics.json", test_metrics),
+        ]
+    for filename, payload in metrics_to_write:
         with open(os.path.join(save_dir, filename), "w") as f:
             json.dump(payload, f, indent=2)
 
@@ -2178,10 +2231,13 @@ def train_savlg_cbm(args):
             "sparse_eval_style": "salf_compatible",
         },
     )
-    logger.info(
-        "SAVLG-CBM train accuracy={:.4f} val accuracy={:.4f} test accuracy={:.4f}",
-        train_accuracy,
-        val_accuracy,
-        test_accuracy,
-    )
+    if getattr(args, "skip_train_val_eval", False):
+        logger.info("SAVLG-CBM test accuracy={:.4f}", test_accuracy)
+    else:
+        logger.info(
+            "SAVLG-CBM train accuracy={:.4f} val accuracy={:.4f} test accuracy={:.4f}",
+            train_accuracy,
+            val_accuracy,
+            test_accuracy,
+        )
     return save_dir
