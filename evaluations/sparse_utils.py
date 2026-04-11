@@ -35,6 +35,7 @@ import numpy as np
 
 MAX_GLM_STEP = 150
 GLM_STEP_SIZE = 2 ** 0.1
+DEFAULT_MEASURE_LEVEL = (5, 10, 15, 20, 25, 30)
 
 
 def measure_acc(
@@ -48,7 +49,7 @@ def measure_acc(
     saga_n_iters=500,
     device="cuda",
     max_lam=0.01,
-    measure_level=(5, 10, 15, 20, 25, 30),
+    measure_level=DEFAULT_MEASURE_LEVEL,
     max_glm_steps=MAX_GLM_STEP,
 ):
     linear = torch.nn.Linear(num_concepts, num_classes).to(device)
@@ -346,6 +347,101 @@ def _extract_savlg_concepts(args, backbone, concept_layer, loader):
     return torch.cat(concept_features, dim=0), torch.cat(concept_labels, dim=0)
 
 
+def _extract_savlg_concept_components(args, backbone, concept_layer, loader):
+    backbone.eval()
+    concept_layer.eval()
+    global_features = []
+    spatial_features = []
+    concept_labels = []
+    with torch.no_grad():
+        for images, labels in tqdm(loader):
+            if isinstance(images, dict):
+                feats = {
+                    key: value.to(args.device, non_blocking=True)
+                    for key, value in images.items()
+                }
+            elif isinstance(images, torch.Tensor) and images.ndim == 4 and int(images.shape[1]) != 3:
+                feats = images.to(args.device, non_blocking=True)
+            else:
+                images = images.to(args.device)
+                feats = forward_savlg_backbone(backbone, images, args)
+            global_outputs, spatial_maps = forward_savlg_concept_layer(concept_layer, feats)
+            global_logits, spatial_logits, _ = compute_savlg_concept_logits(
+                global_outputs,
+                spatial_maps,
+                args,
+            )
+            global_features.append(global_logits.cpu())
+            spatial_features.append(spatial_logits.cpu())
+            concept_labels.append(labels)
+    return (
+        torch.cat(global_features, dim=0),
+        torch.cat(spatial_features, dim=0),
+        torch.cat(concept_labels, dim=0),
+    )
+
+
+def _savlg_nec_component_cache_path(load_dir: str, split_name: str) -> str:
+    return os.path.join(load_dir, f"savlg_nec_{split_name}_components.pt")
+
+
+def _get_or_create_savlg_nec_components(
+    load_dir,
+    split_name: str,
+    args,
+    backbone,
+    concept_layer,
+    dataset,
+):
+    cache_path = _savlg_nec_component_cache_path(load_dir, split_name)
+    if os.path.exists(cache_path):
+        return torch.load(cache_path, map_location="cpu", weights_only=False)
+
+    if _savlg_feature_cache_enabled(args):
+        cached = get_or_create_savlg_feature_cache(args, backbone, dataset, split_name)
+        loader = DataLoader(
+            CachedFeatureLabelDataset(cached["feats"], cached["labels"]),
+            batch_size=args.cbl_batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+    else:
+        loader = DataLoader(
+            dataset,
+            batch_size=args.cbl_batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+        )
+
+    global_concepts, spatial_concepts, labels = _extract_savlg_concept_components(
+        args, backbone, concept_layer, loader
+    )
+    payload = {
+        "global": global_concepts,
+        "spatial": spatial_concepts,
+        "labels": labels,
+    }
+    torch.save(payload, cache_path)
+    return payload
+
+
+def _compose_savlg_final_concepts(component_cache, alpha: float):
+    return component_cache["global"] + float(alpha) * component_cache["spatial"]
+
+
+def _normalize_savlg_final_concepts(load_dir, train_concepts, val_concepts, test_concepts):
+    train_mean = torch.load(
+        os.path.join(load_dir, "proj_mean.pt"), map_location="cpu"
+    )
+    train_std = torch.load(
+        os.path.join(load_dir, "proj_std.pt"), map_location="cpu"
+    )
+    train_concepts = (train_concepts - train_mean) / train_std
+    val_concepts = (val_concepts - train_mean) / train_std
+    test_concepts = (test_concepts - train_mean) / train_std
+    return train_concepts, val_concepts, test_concepts
+
+
 def sparsity_acc_test_salf_cbm(load_dir, lam_max=0.1, n_iters=None, max_glm_steps=MAX_GLM_STEP):
     with open(os.path.join(load_dir, "args.txt"), "r") as f:
         args = json.load(f)
@@ -460,6 +556,8 @@ def sparsity_acc_test_savlg_cbm(
     max_glm_steps=MAX_GLM_STEP,
     cbl_batch_size=None,
     saga_batch_size=None,
+    alpha_override=None,
+    disable_activation_cache_override=False,
 ):
     with open(os.path.join(load_dir, "args.txt"), "r") as f:
         args = json.load(f)
@@ -468,6 +566,9 @@ def sparsity_acc_test_savlg_cbm(
         args.cbl_batch_size = cbl_batch_size
     if saga_batch_size is not None:
         args.saga_batch_size = saga_batch_size
+    if disable_activation_cache_override:
+        args.use_activation_cache = False
+        args.disable_activation_cache = True
     if not hasattr(args, "use_activation_cache"):
         args.use_activation_cache = not bool(getattr(args, "disable_activation_cache", False))
     with open(os.path.join(load_dir, "concepts.txt"), "r") as f:
@@ -480,67 +581,31 @@ def sparsity_acc_test_savlg_cbm(
         torch.load(os.path.join(load_dir, "concept_layer.pt"), map_location=args.device)
     )
 
-    if _savlg_feature_cache_enabled(args):
-        train_cached = get_or_create_savlg_feature_cache(args, backbone, train_dataset, "train")
-        val_cached = get_or_create_savlg_feature_cache(args, backbone, val_dataset, "val")
-        test_cached = get_or_create_savlg_feature_cache(args, backbone, test_dataset, "test")
-        train_loader = DataLoader(
-            CachedFeatureLabelDataset(train_cached["feats"], train_cached["labels"]),
-            batch_size=args.cbl_batch_size,
-            shuffle=False,
-            num_workers=0,
-        )
-        val_loader = DataLoader(
-            CachedFeatureLabelDataset(val_cached["feats"], val_cached["labels"]),
-            batch_size=args.cbl_batch_size,
-            shuffle=False,
-            num_workers=0,
-        )
-        test_loader = DataLoader(
-            CachedFeatureLabelDataset(test_cached["feats"], test_cached["labels"]),
-            batch_size=args.cbl_batch_size,
-            shuffle=False,
-            num_workers=0,
-        )
-    else:
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=args.cbl_batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-        )
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=args.cbl_batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-        )
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=args.cbl_batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-        )
-
-    train_concepts, train_labels = _extract_savlg_concepts(
-        args, backbone, concept_layer, train_loader
+    train_components = _get_or_create_savlg_nec_components(
+        load_dir, "train", args, backbone, concept_layer, train_dataset
     )
-    val_concepts, val_labels = _extract_savlg_concepts(
-        args, backbone, concept_layer, val_loader
+    val_components = _get_or_create_savlg_nec_components(
+        load_dir, "val", args, backbone, concept_layer, val_dataset
     )
-    test_concepts, test_labels = _extract_savlg_concepts(
-        args, backbone, concept_layer, test_loader
+    test_components = _get_or_create_savlg_nec_components(
+        load_dir, "test", args, backbone, concept_layer, test_dataset
     )
 
-    train_mean = torch.load(
-        os.path.join(load_dir, "proj_mean.pt"), map_location="cpu"
+    alpha = (
+        float(alpha_override)
+        if alpha_override is not None
+        else float(getattr(args, "savlg_residual_spatial_alpha", 0.0))
     )
-    train_std = torch.load(
-        os.path.join(load_dir, "proj_std.pt"), map_location="cpu"
+    train_concepts = _compose_savlg_final_concepts(train_components, alpha)
+    val_concepts = _compose_savlg_final_concepts(val_components, alpha)
+    test_concepts = _compose_savlg_final_concepts(test_components, alpha)
+    train_labels = train_components["labels"]
+    val_labels = val_components["labels"]
+    test_labels = test_components["labels"]
+
+    train_concepts, val_concepts, test_concepts = _normalize_savlg_final_concepts(
+        load_dir, train_concepts, val_concepts, test_concepts
     )
-    train_concepts = (train_concepts - train_mean) / train_std
-    val_concepts = (val_concepts - train_mean) / train_std
-    test_concepts = (test_concepts - train_mean) / train_std
 
     train_concept_loader = DataLoader(
         IndexedTensorDataset(train_concepts, train_labels),

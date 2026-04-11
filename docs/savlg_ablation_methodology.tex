@@ -1,0 +1,410 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, bm}
+\usepackage{graphicx}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.5em}
+
+\title{SAVLG-CBM Ablation Methodology}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Pipeline}
+For an input image $x$, the SAVLG model produces a global concept branch and a
+spatial concept branch.
+
+\subsection{Backbone Features}
+Let the frozen visual backbone produce:
+\[
+\mathbf{f}_4 \in \mathbb{R}^{C_4 \times H_4 \times W_4},
+\qquad
+\mathbf{f}_5 \in \mathbb{R}^{C_5 \times H_5 \times W_5}.
+\]
+For the ResNet-50 MMPretrain CUB setup with $448 \times 448$ inputs:
+\[
+H_4 \times W_4 = 28 \times 28,
+\qquad
+H_5 \times W_5 = 14 \times 14.
+\]
+
+\subsection{Global Branch}
+The global branch uses the conv5 feature map. Global average pooling gives
+\[
+\bar{\mathbf{f}}_5 = \operatorname{GAP}(\mathbf{f}_5),
+\]
+and the global concept head produces
+\[
+\mathbf{c}_{\mathrm{global}} = g(\bar{\mathbf{f}}_5) \in \mathbb{R}^{K},
+\]
+where $K$ is the number of concepts.
+
+\subsection{Spatial Branch}
+The spatial branch predicts concept maps
+\[
+\mathbf{M} \in \mathbb{R}^{K \times H \times W}.
+\]
+The exact branch depends on the ablation:
+
+\paragraph{conv5 branch.}
+\[
+\mathbf{M} = s(\mathbf{f}_5),
+\qquad
+H \times W = 14 \times 14.
+\]
+
+\paragraph{conv4 branch.}
+\[
+\mathbf{M} = s(\mathbf{f}_4),
+\qquad
+H \times W = 28 \times 28.
+\]
+
+\paragraph{conv4+conv5 multiscale branch.}
+The two stages are fused first:
+\[
+\tilde{\mathbf{f}}_5 = \operatorname{Up}\!\left(W_5 * \mathbf{f}_5\right),
+\qquad
+\tilde{\mathbf{f}}_4 = W_4 * \mathbf{f}_4,
+\]
+\[
+\mathbf{f}_{\mathrm{fused}} = \operatorname{ReLU}\!\left(\tilde{\mathbf{f}}_4 + \tilde{\mathbf{f}}_5\right),
+\]
+then
+\[
+\mathbf{M} = s(\mathbf{f}_{\mathrm{fused}}),
+\qquad
+H \times W = 28 \times 28.
+\]
+So the multiscale branch does \emph{early fusion of features}, not separate
+losses on separate conv4 and conv5 maps.
+
+\subsection{Spatial Logit Pooling}
+The spatial maps are pooled into spatial concept logits:
+\[
+\mathbf{c}_{\mathrm{spatial}} = p(\mathbf{M}) \in \mathbb{R}^{K},
+\]
+where the residual coupling path uses LSE pooling in the current ablations.
+
+\subsection{Residual Concept Fusion}
+The final concept vector seen by the classifier is
+\[
+\mathbf{c}_{\mathrm{final}}
+=
+\mathbf{c}_{\mathrm{global}}
++
+\alpha \, \mathbf{c}_{\mathrm{spatial}},
+\]
+where $\alpha$ is the residual spatial coupling coefficient.
+
+\paragraph{Important detail.}
+In the current implementation, the image-level concept loss is applied to
+$\mathbf{c}_{\mathrm{final}}$, not just $\mathbf{c}_{\mathrm{global}}$.
+So the spatial branch affects training through the fused concept logits.
+
+\section{Loss Used in the 5-Run Ablation Study}
+The ablation study only used the following core terms:
+\[
+\mathcal{L}
+=
+\lambda_{\mathrm{global}} \mathcal{L}_{\mathrm{global}}
++
+\lambda_{\mathrm{align}} \mathcal{L}_{\mathrm{align}}
++
+\lambda_{\mathrm{outside}} \mathcal{L}_{\mathrm{outside}}
++
+\lambda_{\mathrm{coverage}} \mathcal{L}_{\mathrm{coverage}}
++
+\lambda_{\mathrm{dice}} \mathcal{L}_{\mathrm{dice}}.
+\]
+
+In most runs:
+\[
+\lambda_{\mathrm{dice}} = 0.
+\]
+Only the Dice ablation enabled the final term.
+
+\section{Loss Terms}
+\subsection{1. Global Concept BCE on Fused Logits}
+Let $\mathbf{y} \in \{0,1\}^{K}$ denote the image-level concept targets. The
+global concept supervision used in the ablations is plain BCE on the
+\emph{fused} logits:
+\[
+\mathcal{L}_{\mathrm{global}}
+=
+\frac{1}{K}\sum_{k=1}^{K}
+\operatorname{BCEWithLogits}\!\left(c_{\mathrm{final},k}, y_k\right).
+\]
+
+\paragraph{Interpretation.}
+This term trains the final concept vector used by the sparse classifier. Because
+$\mathbf{c}_{\mathrm{final}}$ contains the residual spatial contribution, the
+spatial branch participates in image-level concept learning.
+
+\subsection{2. Soft-Align KL Loss on Spatial Maps}
+For a supervised concept $k$, let:
+\[
+\mathbf{m}_k \in \mathbb{R}^{H' \times W'}
+\]
+be the interpolated predicted concept map logits and
+\[
+\mathbf{t}_k \in [0,1]^{H' \times W'}
+\]
+be the target soft box / mask target.
+
+The target is normalized into a spatial distribution:
+\[
+\mathbf{q}_k
+=
+\frac{\mathbf{t}_k}{\sum_u t_{k,u}}.
+\]
+The prediction becomes a log-distribution:
+\[
+\log \mathbf{p}_k
+=
+\log \operatorname{softmax}(\mathbf{m}_k).
+\]
+Then the local alignment loss is
+\[
+\mathcal{L}_{\mathrm{align}}
+=
+D_{\mathrm{KL}}(\mathbf{q}_k \,\|\, \mathbf{p}_k).
+\]
+
+\paragraph{Interpretation.}
+This encourages the spatial map to put probability mass where the target region
+lies, without forcing hard binary pixel classification.
+
+\subsection{Example: Bounding Box to $t_k$ and $q_k$}
+Figure~\ref{fig:target-mask-rasterization} shows the geometric picture: a
+concept-level bounding box is rasterized onto the spatial supervision grid,
+producing the soft target mask $t_k$.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.92\linewidth]{docs/figures/savlg_target_mask_example.pdf}
+    \caption{A concept bounding box in the image plane is rasterized onto the
+    spatial supervision grid. In \texttt{soft\_box} mode, each entry of
+    $t_k$ is the fractional occupancy of the corresponding grid cell.}
+    \label{fig:target-mask-rasterization}
+\end{figure}
+
+Suppose an image-level annotation provides a concept box that covers the middle
+of the object, and suppose the supervision grid is $4 \times 4$. In the
+\texttt{soft\_box} target mode, each entry of $t_k$ is the fractional occupancy
+of the corresponding grid cell by the bounding box. A simple example is:
+\[
+\mathbf{t}_k
+=
+\begin{bmatrix}
+0 & 0 & 0 & 0 \\
+0 & 0.25 & 0.50 & 0 \\
+0 & 0.50 & 1.00 & 0 \\
+0 & 0 & 0 & 0
+\end{bmatrix}.
+\]
+The total target mass is
+\[
+\sum_u t_{k,u} = 2.25.
+\]
+Therefore the normalized soft target distribution used by the KL term is
+\[
+\mathbf{q}_k
+=
+\frac{\mathbf{t}_k}{2.25}
+=
+\begin{bmatrix}
+0 & 0 & 0 & 0 \\
+0 & 0.1111 & 0.2222 & 0 \\
+0 & 0.2222 & 0.4444 & 0 \\
+0 & 0 & 0 & 0
+\end{bmatrix}.
+\]
+
+\paragraph{Interpretation.}
+Here, $t_k$ is still a spatial support target in the original mask units,
+whereas $q_k$ is the probability distribution used by the soft-align KL loss.
+Large cells inside the box receive more target probability mass than partially
+covered cells near the boundary. In the implementation, small clamps are used
+for numerical safety, but conceptually this normalization is just
+$q_k = t_k / \sum_u t_{k,u}$.
+
+\subsection{Why These Spatial Terms Are Needed}
+The three main spatial terms used in the ablation study play different roles.
+They are easiest to understand by considering three failure modes of a concept
+map:
+
+\paragraph{Failure mode A: correct region, but mass placed too unevenly.}
+The model may activate inside the target box, but concentrate almost all mass in
+one corner or one very small hotspot. In that case, the map is ``inside'' the
+box, but it does not match the intended spatial support well.
+
+\paragraph{Failure mode B: activation spills outside the target.}
+The model may put substantial probability mass on background or neighboring
+parts. This can still produce a nontrivial overlap score, but the map is not
+cleanly grounded.
+
+\paragraph{Failure mode C: tiny peak inside a large target.}
+The model may place a sharp peak inside the box and satisfy a weak containment
+style notion, yet fail to cover the full target extent. This is especially bad
+for IoU-oriented evaluation.
+
+These failure modes motivate the three terms below:
+
+\begin{itemize}
+    \item \textbf{Soft-align KL:} aligns the predicted spatial probability map to
+    the normalized target distribution $q_k$, so the map does not merely land
+    somewhere inside the box but matches the target support more faithfully.
+    \item \textbf{Outside-mass penalty:} explicitly suppresses probability mass
+    outside the target support, reducing spillover onto irrelevant regions.
+    \item \textbf{Coverage penalty:} rewards activating across the target region
+    rather than producing a tiny discriminative hotspot.
+\end{itemize}
+
+\paragraph{Combined effect.}
+Soft-align shapes \emph{where} mass should go, outside penalty removes
+\emph{where mass should not go}, and coverage encourages \emph{how much of the
+target region should be covered}. In practice, this combination was more useful
+than using any single term alone.
+
+\subsection{3. Outside-Mass Penalty}
+Let
+\[
+\tilde{\mathbf{p}}_k = \operatorname{softmax}(\mathbf{m}_k)
+\]
+over spatial locations. The outside-mass penalty is
+\[
+\mathcal{L}_{\mathrm{outside}}
+=
+\sum_u \tilde{p}_{k,u}(1 - t_{k,u}).
+\]
+
+\paragraph{Interpretation.}
+This penalizes probability mass outside the target support and reduces spillover.
+
+\subsection{4. Coverage Penalty}
+Let
+\[
+\hat{\mathbf{p}}_k = \sigma(\mathbf{m}_k).
+\]
+For one supervised concept $k$, coverage over the target region is
+\[
+\operatorname{coverage}_k
+=
+\frac{
+\sum_u \hat{p}_{k,u} t_{k,u}
+}{
+\sum_u t_{k,u} + \varepsilon
+}.
+\]
+The corresponding per-concept penalty is
+\[
+\mathcal{L}_{\mathrm{coverage}}^{(k)}
+=
+1 - \operatorname{coverage}_k.
+\]
+
+The full training loss averages this quantity over the supervised concepts in an
+image, and then averages again over the batch:
+\[
+\mathcal{L}_{\mathrm{coverage}}
+=
+\frac{1}{B}\sum_{b=1}^{B}
+\left(
+\frac{
+\sum_{k \in \mathcal{K}_b}
+w_{b,k}\,
+\mathcal{L}_{\mathrm{coverage}}^{(b,k)}
+}{
+\sum_{k \in \mathcal{K}_b} w_{b,k}
+}
+\right),
+\]
+where $\mathcal{K}_b$ is the set of supervised concepts for image $b$.
+
+\paragraph{Interpretation.}
+This pushes the map to cover more of the target region rather than only peaking
+inside it. Because the numerator is
+\[
+\sum_u \hat{p}_{k,u} t_{k,u},
+\]
+locations with larger target values $t_{k,u}$ contribute more to the covered
+mass. So yes: if a location has high $t_{k,u}$, the loss encourages high
+$\hat{p}_{k,u}$ there. In the simplest binary case, this term rewards having
+high sigmoid probability across the whole target support rather than only at one
+small hotspot.
+
+\subsection{5. Dice Loss}
+Only the Dice ablation used this term. With sigmoid probabilities:
+\[
+\hat{\mathbf{p}}_k = \sigma(\mathbf{m}_k),
+\]
+the Dice loss is
+\[
+\mathcal{L}_{\mathrm{dice}}
+=
+1 -
+\frac{
+2 \sum_u \hat{p}_{k,u} t_{k,u} + \varepsilon
+}{
+\sum_u \hat{p}_{k,u} + \sum_u t_{k,u} + \varepsilon
+}.
+\]
+
+\paragraph{Interpretation.}
+Dice directly rewards overlap between predicted support and target support.
+
+\section{Ablation-Specific Loss Stacks}
+\paragraph{conv5 + cov025.}
+\[
+\mathcal{L}
+=
+\mathcal{L}_{\mathrm{global}}
++
+0.25\,\mathcal{L}_{\mathrm{align}}
++
+0.25\,\mathcal{L}_{\mathrm{outside}}
++
+0.25\,\mathcal{L}_{\mathrm{coverage}}.
+\]
+
+\paragraph{conv5 + cov050.}
+Same as above, but with
+\[
+\lambda_{\mathrm{coverage}} = 0.5.
+\]
+
+\paragraph{conv5 + dice010.}
+Same as `conv5 + cov025`, plus
+\[
+\lambda_{\mathrm{dice}} = 0.1.
+\]
+
+\paragraph{conv4.}
+Same loss stack as `conv5 + cov025`, but with the spatial branch operating on
+conv4 features.
+
+\paragraph{conv4+conv5.}
+Same loss stack as `conv5 + cov025`, but with the spatial branch operating on
+the fused conv4+conv5 feature map.
+
+\section{Summary}
+The 5-run ablation study varied two things:
+\begin{itemize}
+    \item the spatial feature source: conv5, conv4, or conv4+conv5,
+    \item the local overlap regularization: baseline coverage, higher coverage, or Dice.
+\end{itemize}
+
+The key design point is:
+\begin{itemize}
+    \item concept supervision is applied to the fused logits $\mathbf{c}_{\mathrm{final}}$,
+    \item localization supervision is applied directly to the spatial maps $\mathbf{M}$.
+\end{itemize}
+
+\end{document}

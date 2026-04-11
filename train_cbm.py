@@ -582,6 +582,11 @@ def main():
         help="How many iterations to run the final layer solver for",
     )
     parser.add_argument(
+        "--skip_train_val_eval",
+        action="store_true",
+        help="Skip final train/val accuracy evaluation and only compute test accuracy.",
+    )
+    parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
     parser.add_argument(

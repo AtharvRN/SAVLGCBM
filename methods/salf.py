@@ -827,12 +827,16 @@ def train_salf_cbm(args):
     b_g = output_proj["path"][0]["bias"]
     final_layer.load_state_dict({"weight": W_g, "bias": b_g})
 
-    train_accuracy = evaluate_salf_accuracy(
-        args, backbone, concept_layer, train_mean, train_std, final_layer, train_dataset
-    )
-    val_accuracy = evaluate_salf_accuracy(
-        args, backbone, concept_layer, train_mean, train_std, final_layer, val_dataset
-    )
+    if getattr(args, "skip_train_val_eval", False):
+        train_accuracy = None
+        val_accuracy = None
+    else:
+        train_accuracy = evaluate_salf_accuracy(
+            args, backbone, concept_layer, train_mean, train_std, final_layer, train_dataset
+        )
+        val_accuracy = evaluate_salf_accuracy(
+            args, backbone, concept_layer, train_mean, train_std, final_layer, val_dataset
+        )
     test_accuracy = evaluate_salf_accuracy(
         args, backbone, concept_layer, train_mean, train_std, final_layer, test_dataset
     )
@@ -917,10 +921,13 @@ def train_salf_cbm(args):
             "sparse_eval_style": "not_yet_supported",
         },
     )
-    logger.info(
-        "SALF-CBM train accuracy={:.4f} val accuracy={:.4f} test accuracy={:.4f}",
-        train_accuracy,
-        val_accuracy,
-        test_accuracy,
-    )
+    if train_accuracy is None or val_accuracy is None:
+        logger.info("SALF-CBM test accuracy={:.4f} (train/val eval skipped)", test_accuracy)
+    else:
+        logger.info(
+            "SALF-CBM train accuracy={:.4f} val accuracy={:.4f} test accuracy={:.4f}",
+            train_accuracy,
+            val_accuracy,
+            test_accuracy,
+        )
     return save_dir

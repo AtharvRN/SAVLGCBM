@@ -20,6 +20,10 @@ parser.add_argument("--result_file", type=str, default=None)
 parser.add_argument("--lf-cbm", action="store_true")
 parser.add_argument("--n_iters", type=int, default=None)
 parser.add_argument("--max_glm_steps", type=int, default=None)
+parser.add_argument("--cbl_batch_size", type=int, default=None)
+parser.add_argument("--saga_batch_size", type=int, default=None)
+parser.add_argument("--savlg_alpha_override", type=float, default=None)
+parser.add_argument("--disable_activation_cache", action="store_true")
 
 args = parser.parse_args()
 run_info = load_run_info(args.load_path)
@@ -53,6 +57,10 @@ elif model_name == "savlg_cbm":
         lam_max=args.lam,
         n_iters=args.n_iters,
         max_glm_steps=args.max_glm_steps if args.max_glm_steps is not None else 150,
+        cbl_batch_size=args.cbl_batch_size,
+        saga_batch_size=args.saga_batch_size,
+        alpha_override=args.savlg_alpha_override,
+        disable_activation_cache_override=args.disable_activation_cache,
     )
 else:
     raise NotImplementedError(

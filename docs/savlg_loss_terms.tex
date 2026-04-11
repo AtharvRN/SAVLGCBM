@@ -1,0 +1,274 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, bm}
+\usepackage{booktabs}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.5em}
+
+\title{SAVLG-CBM Loss Terms}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Model Outputs}
+For an input image $x$, the SAVLG model produces:
+\begin{itemize}
+    \item global concept logits $\bm{c}_{\mathrm{global}} \in \mathbb{R}^K$,
+    \item spatial concept maps $\bm{M} \in \mathbb{R}^{K \times H \times W}$,
+    \item pooled spatial concept logits $\bm{c}_{\mathrm{spatial}} \in \mathbb{R}^K$,
+    \item final concept logits
+    \[
+        \bm{c}_{\mathrm{final}}
+        =
+        \bm{c}_{\mathrm{global}}
+        +
+        \alpha \, \bm{c}_{\mathrm{spatial}},
+    \]
+    where $\alpha$ is the residual spatial coupling coefficient.
+\end{itemize}
+
+The local supervision consists of concept-specific target masks or soft box masks
+$\bm{T}_{k} \in [0,1]^{H' \times W'}$ for selected concepts $k$.
+
+\section{Total Objective}
+The training objective implemented in \texttt{methods/savlg.py} is
+\begin{align}
+\mathcal{L}_{\mathrm{total}}
+&=
+\lambda_{\mathrm{global}} \mathcal{L}_{\mathrm{global}}
++
+\lambda_{\mathrm{mask}} \mathcal{L}_{\mathrm{mask}}
++
+\lambda_{\mathrm{dice}} \mathcal{L}_{\mathrm{dice}}
++
+\lambda_{\mathrm{mil}} \mathcal{L}_{\mathrm{mil}}
+\nonumber\\
+&\quad
++
+\lambda_{\mathrm{outside}} \mathcal{L}_{\mathrm{outside}}
++
+\lambda_{\mathrm{coverage}} \mathcal{L}_{\mathrm{coverage}}
++
+\lambda_{\mathrm{refine}} \mathcal{L}_{\mathrm{refine}}
++
+\lambda_{\mathrm{cons}} \mathcal{L}_{\mathrm{cons}}
++
+\lambda_{\mathrm{distill}} \mathcal{L}_{\mathrm{distill}}.
+\end{align}
+
+In most successful SAVLG runs, the active subset was
+\[
+\mathcal{L}_{\mathrm{total}}
+=
+\lambda_{\mathrm{global}} \mathcal{L}_{\mathrm{global}}
++
+\lambda_{\mathrm{mask}} \mathcal{L}_{\mathrm{mask}}
++
+\lambda_{\mathrm{outside}} \mathcal{L}_{\mathrm{outside}}
++
+\lambda_{\mathrm{coverage}} \mathcal{L}_{\mathrm{coverage}},
+\]
+optionally with a small Dice term.
+
+\section{Core Loss Terms}
+
+\subsection{Global Concept Loss}
+The final concept logits are trained against global concept targets
+$\bm{y} \in \{0,1\}^K$ using weighted binary cross-entropy:
+\begin{align}
+\mathcal{L}_{\mathrm{global}}
+=
+\frac{
+\sum_{k=1}^{K}
+w_k^{(\mathrm{global})}
+\,
+\mathrm{BCEWithLogits}(c_{\mathrm{final},k}, y_k)
+}{
+\sum_{k=1}^{K} w_k^{(\mathrm{global})}
+}.
+\end{align}
+Positive concepts may receive an upweight through
+\texttt{global\_bce\_pos\_weight}.
+
+\paragraph{Purpose.}
+This keeps the concept bottleneck predictive at the image level and ensures that
+the spatial branch improves the concept vector used by the sparse classifier.
+
+\subsection{Mask Loss}
+The mask loss aligns each predicted spatial concept map with its target region.
+Let $\bm{m}_k$ be the predicted map logits for concept $k$ after interpolation to
+the target mask resolution, and let $\bm{t}_k$ be the corresponding target mask.
+
+SAVLG supports three local loss modes:
+
+\paragraph{(a) BCE mode}
+\begin{align}
+\mathcal{L}_{\mathrm{mask}}^{\mathrm{bce}}
+=
+\frac{
+\sum_{u}
+w_u^{(\mathrm{patch})}
+\,
+\mathrm{BCEWithLogits}(m_{k,u}, t_{k,u})
+}{
+\sum_{u} w_u^{(\mathrm{patch})}
+}.
+\end{align}
+This is dense pixel-wise supervision.
+
+\paragraph{(b) Containment mode}
+\begin{align}
+\mathcal{L}_{\mathrm{mask}}^{\mathrm{contain}}
+=
+1 -
+\frac{
+\sum_{u} \sigma(m_{k,u}) \, t_{k,u}
+}{
+\sum_{u} \sigma(m_{k,u}) + \varepsilon
+}.
+\end{align}
+This only asks that the predicted mass lie inside the target region.
+
+\paragraph{(c) Soft-align mode}
+This is the mode used in the strongest runs. The target mask is normalized into a
+spatial distribution:
+\[
+\bm{q}_k = \frac{\max(\bm{t}_k, 0)}{\sum_u \max(t_{k,u},0)}.
+\]
+The prediction defines a log-softmax distribution:
+\[
+\log \bm{p}_k = \log \mathrm{softmax}(\bm{m}_k).
+\]
+Then the loss is
+\begin{align}
+\mathcal{L}_{\mathrm{mask}}^{\mathrm{soft}}
+=
+D_{\mathrm{KL}}(\bm{q}_k \,\|\, \bm{p}_k).
+\end{align}
+
+\paragraph{Purpose.}
+The mask term is the main spatial supervision. In the successful SAVLG runs,
+\texttt{soft\_align} worked better than hard per-pixel BCE because it supervises
+where probability mass should go without forcing exact mask calibration.
+
+\subsection{Outside-Mass Penalty}
+The outside penalty penalizes normalized activation mass that falls outside the
+target region. Let $\tilde{\bm{p}}_k = \mathrm{softmax}(\bm{m}_k)$ over spatial
+locations. Then
+\begin{align}
+\mathcal{L}_{\mathrm{outside}}
+=
+\sum_{u}
+\tilde{p}_{k,u}
+\,
+(1 - \mathrm{clip}(t_{k,u}, 0, 1)).
+\end{align}
+
+\paragraph{Purpose.}
+This shrinks spillover and encourages the map to stay concentrated inside the
+supervised concept region.
+
+\subsection{Coverage Penalty}
+The coverage penalty rewards activation over the full target region, not just a
+small hotspot. With $\hat{\bm{p}}_k = \sigma(\bm{m}_k)$:
+\begin{align}
+\mathrm{coverage}_k
+&=
+\frac{
+\sum_{u} \hat{p}_{k,u} \, t_{k,u}
+}{
+\sum_{u} t_{k,u} + \varepsilon
+}, \\
+\mathcal{L}_{\mathrm{coverage}}
+&=
+1 - \mathrm{coverage}_k.
+\end{align}
+
+\paragraph{Purpose.}
+This addresses the common failure mode where a map peaks at the correct place but
+does not cover enough of the ground-truth region to achieve good IoU or box overlap.
+
+\subsection{Dice Loss}
+When enabled, Dice loss is
+\begin{align}
+\mathcal{L}_{\mathrm{dice}}
+=
+1 -
+\frac{
+2 \sum_{u} \sigma(m_{k,u}) t_{k,u} + \varepsilon
+}{
+\sum_{u} \sigma(m_{k,u}) + \sum_{u} t_{k,u} + \varepsilon
+}.
+\end{align}
+
+\paragraph{Purpose.}
+Dice directly optimizes region overlap. In practice, it gave modest gains on the
+\texttt{conv5} branch but the biggest localization gains came from changing the
+spatial branch itself to \texttt{conv4} or \texttt{conv4+conv5}.
+
+\section{Optional Auxiliary Terms}
+
+\subsection{Local MIL Loss}
+If local MIL is enabled, pooled local logits are trained against the global concept
+targets using another weighted BCE term:
+\begin{align}
+\mathcal{L}_{\mathrm{mil}}
+=
+\mathrm{BCEWithLogits}(\bm{c}_{\mathrm{local\_mil}}, \bm{y}).
+\end{align}
+This is optional and was usually disabled in the strongest reported runs.
+
+\subsection{Refinement Loss}
+\(\mathcal{L}_{\mathrm{refine}}\) is an optional refinement term applied after a
+warmup period. It is used to sharpen local supervision but is not part of the core
+successful loss recipe described in the main SAVLG runs.
+
+\subsection{Global-Spatial Consistency Loss}
+\(\mathcal{L}_{\mathrm{cons}}\) encourages agreement between the global concept
+logits and a spatial teacher signal derived from the spatial maps or local MIL logits.
+It is optional and activated only if consistency training is enabled.
+
+\subsection{Teacher Distillation Loss}
+If a teacher concept model is provided, SAVLG can distill the teacher concept
+probabilities using BCE:
+\begin{align}
+\mathcal{L}_{\mathrm{distill}}
+=
+\mathrm{BCEWithLogits}(\bm{c}_{\mathrm{final}}, \sigma(\bm{c}_{\mathrm{teacher}})).
+\end{align}
+This is also optional.
+
+\section{How the Main Successful Configurations Differed}
+The main successful settings can be summarized as follows:
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+Run type & Mask mode & Outside & Coverage & Dice \\
+\midrule
+conv5 + cov025 & soft-align & 0.25 & 0.25 & 0.00 \\
+conv5 + cov050 & soft-align & 0.25 & 0.50 & 0.00 \\
+conv5 + dice010 & soft-align & 0.25 & 0.25 & 0.10 \\
+conv4 & soft-align & 0.25 & 0.25 & 0.00 \\
+conv4+conv5 & soft-align & 0.25 & 0.25 & 0.00 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Observed effect.}
+Empirically, the largest localization gains came from changing the spatial branch
+from \texttt{conv5} to \texttt{conv4} and then to \texttt{conv4+conv5}. Increasing
+coverage weight alone did not help, while a small Dice term gave modest gains on
+the \texttt{conv5} branch.
+
+\section{Implementation Note}
+The formulas in this note are taken directly from the current implementation in
+\texttt{methods/savlg.py}, especially \texttt{compute\_spatial\_losses(...)} and
+the main training loop where the weighted sum is assembled.
+
+\end{document}
