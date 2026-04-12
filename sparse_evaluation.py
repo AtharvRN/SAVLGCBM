@@ -24,6 +24,8 @@ parser.add_argument("--cbl_batch_size", type=int, default=None)
 parser.add_argument("--saga_batch_size", type=int, default=None)
 parser.add_argument("--savlg_alpha_override", type=float, default=None)
 parser.add_argument("--disable_activation_cache", action="store_true")
+parser.add_argument("--max_images", type=int, default=None)
+parser.add_argument("--savlg_branch_norm_mode", type=str, default="none")
 
 args = parser.parse_args()
 run_info = load_run_info(args.load_path)
@@ -61,6 +63,8 @@ elif model_name == "savlg_cbm":
         saga_batch_size=args.saga_batch_size,
         alpha_override=args.savlg_alpha_override,
         disable_activation_cache_override=args.disable_activation_cache,
+        max_images=args.max_images,
+        branch_norm_mode=args.savlg_branch_norm_mode,
     )
 else:
     raise NotImplementedError(

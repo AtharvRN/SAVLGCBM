@@ -878,9 +878,10 @@ def build_savlg_global_head(args, in_features: int, n_concepts: int) -> nn.Modul
 
 
 def apply_savlg_global_head(global_layer: nn.Module, feats, args) -> torch.Tensor:
+    if isinstance(feats, dict):
+        # Dual/multiscale branches keep the global path on conv5 features.
+        feats = feats["conv5"]
     if savlg_uses_vlg_global_head(args):
-        if isinstance(feats, dict):
-            feats = feats["conv5"]
         pooled_feats = feats.mean(dim=[2, 3])
         return global_layer(pooled_feats)
     return global_layer(feats)

@@ -17,11 +17,11 @@ from methods.savlg import (
     CachedFeatureLabelDataset,
     _savlg_feature_cache_enabled,
     build_savlg_concept_layer,
+    build_savlg_feature_cache_in_memory,
     compute_savlg_concept_logits,
     create_savlg_splits,
     forward_savlg_backbone,
     forward_savlg_concept_layer,
-    get_or_create_savlg_feature_cache,
 )
 from model.cbm import (
     Backbone,
@@ -393,12 +393,8 @@ def _get_or_create_savlg_nec_components(
     concept_layer,
     dataset,
 ):
-    cache_path = _savlg_nec_component_cache_path(load_dir, split_name)
-    if os.path.exists(cache_path):
-        return torch.load(cache_path, map_location="cpu", weights_only=False)
-
     if _savlg_feature_cache_enabled(args):
-        cached = get_or_create_savlg_feature_cache(args, backbone, dataset, split_name)
+        cached = build_savlg_feature_cache_in_memory(args, backbone, dataset, split_name)
         loader = DataLoader(
             CachedFeatureLabelDataset(cached["feats"], cached["labels"]),
             batch_size=args.cbl_batch_size,
@@ -421,12 +417,69 @@ def _get_or_create_savlg_nec_components(
         "spatial": spatial_concepts,
         "labels": labels,
     }
-    torch.save(payload, cache_path)
     return payload
 
 
 def _compose_savlg_final_concepts(component_cache, alpha: float):
     return component_cache["global"] + float(alpha) * component_cache["spatial"]
+
+
+def _zscore_from_train(train_x, val_x, test_x):
+    mean = train_x.mean(dim=0)
+    std = train_x.std(dim=0, unbiased=False).clamp_min(1e-6)
+    return (
+        (train_x - mean) / std,
+        (val_x - mean) / std,
+        (test_x - mean) / std,
+        mean,
+        std,
+    )
+
+
+def _compose_savlg_final_concepts_with_branch_norm(
+    train_components,
+    val_components,
+    test_components,
+    alpha: float,
+    branch_norm_mode: str,
+):
+    mode = str(branch_norm_mode).lower()
+    if mode in {"none", "off", ""}:
+        return (
+            _compose_savlg_final_concepts(train_components, alpha),
+            _compose_savlg_final_concepts(val_components, alpha),
+            _compose_savlg_final_concepts(test_components, alpha),
+        )
+    if mode not in {"train_zscore", "zscore_train"}:
+        raise ValueError(f"Unsupported SAVLG branch normalization mode: {branch_norm_mode}")
+
+    train_global, val_global, test_global, _, _ = _zscore_from_train(
+        train_components["global"],
+        val_components["global"],
+        test_components["global"],
+    )
+    train_spatial, val_spatial, test_spatial, _, _ = _zscore_from_train(
+        train_components["spatial"],
+        val_components["spatial"],
+        test_components["spatial"],
+    )
+    alpha = float(alpha)
+    return (
+        train_global + alpha * train_spatial,
+        val_global + alpha * val_spatial,
+        test_global + alpha * test_spatial,
+    )
+
+
+def _subset_component_cache(component_cache, max_images: int | None):
+    if max_images is None:
+        return component_cache
+    keep = min(int(max_images), int(component_cache["labels"].shape[0]))
+    return {
+        "global": component_cache["global"][:keep],
+        "spatial": component_cache["spatial"][:keep],
+        "labels": component_cache["labels"][:keep],
+    }
 
 
 def _normalize_savlg_final_concepts(load_dir, train_concepts, val_concepts, test_concepts):
@@ -558,6 +611,8 @@ def sparsity_acc_test_savlg_cbm(
     saga_batch_size=None,
     alpha_override=None,
     disable_activation_cache_override=False,
+    max_images=None,
+    branch_norm_mode="none",
 ):
     with open(os.path.join(load_dir, "args.txt"), "r") as f:
         args = json.load(f)
@@ -591,21 +646,36 @@ def sparsity_acc_test_savlg_cbm(
         load_dir, "test", args, backbone, concept_layer, test_dataset
     )
 
+    train_components = _subset_component_cache(train_components, max_images)
+    val_components = _subset_component_cache(val_components, max_images)
+    test_components = _subset_component_cache(test_components, max_images)
+
     alpha = (
         float(alpha_override)
         if alpha_override is not None
         else float(getattr(args, "savlg_residual_spatial_alpha", 0.0))
     )
-    train_concepts = _compose_savlg_final_concepts(train_components, alpha)
-    val_concepts = _compose_savlg_final_concepts(val_components, alpha)
-    test_concepts = _compose_savlg_final_concepts(test_components, alpha)
+    train_concepts, val_concepts, test_concepts = _compose_savlg_final_concepts_with_branch_norm(
+        train_components,
+        val_components,
+        test_components,
+        alpha,
+        branch_norm_mode=branch_norm_mode,
+    )
     train_labels = train_components["labels"]
     val_labels = val_components["labels"]
     test_labels = test_components["labels"]
 
-    train_concepts, val_concepts, test_concepts = _normalize_savlg_final_concepts(
-        load_dir, train_concepts, val_concepts, test_concepts
-    )
+    if str(branch_norm_mode).lower() in {"none", "off", ""}:
+        train_concepts, val_concepts, test_concepts = _normalize_savlg_final_concepts(
+            load_dir, train_concepts, val_concepts, test_concepts
+        )
+    else:
+        train_concepts, val_concepts, test_concepts, _, _ = _zscore_from_train(
+            train_concepts,
+            val_concepts,
+            test_concepts,
+        )
 
     train_concept_loader = DataLoader(
         IndexedTensorDataset(train_concepts, train_labels),

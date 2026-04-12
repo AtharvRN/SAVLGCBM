@@ -1261,3 +1261,37 @@ Fast NEC sweep:
   - Sparse performance stays extremely close to the default `saga_lam = 0.0002` checkpoint accuracy, so low-NEC degradation is much smaller than on the weaker backbone.
   - `SALF-CBM` does not beat `VLG-CBM` on this post-hoc localization view.
   - `LF-CBM` is weakest overall despite a small edge on `mAP@0.7`.
+
+### ResNet-50 SAVLG branch/loss ablations
+
+Completed ResNet-50 SAVLG runs:
+
+| Run | Full Acc | ACC@5 | AVGACC | MaxBoxAcc@0.3 | MaxBoxAcc@0.5 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `conv5 + cov025` | `0.8566` | `0.8558` | `0.8564` | `0.3301` | `0.1408` | baseline conv5 branch |
+| `conv5 + cov050` | `0.8566` | `0.8544` | `0.8561` | `0.3207` | `0.1371` | stronger coverage did not help |
+| `conv5 + dice010` | `0.8570` | `0.8558` | `0.8563` | `0.3393` | `0.1462` | best finished conv5 localization |
+| `conv4` | `0.8584` | `0.8551` | `0.8559` | `0.3709` | `0.1573` | best dense accuracy in the 5-run sweep |
+| `conv4+conv5` | `0.8573` | `0.8565` | `0.8561` | `0.4467` | `0.2152` | best localization |
+| `conv5 + soft-align only` | `0.8615` | `0.8570` | `0.8568` | `pending` | `pending` | no outside penalty, no coverage, no Dice |
+
+Additional ResNet-50 checkpoints / baselines:
+
+| Run | Full Acc | ACC@5 | AVGACC | Notes |
+| --- | ---: | ---: | ---: | --- |
+| `SALF-CBM resnet50_cub_mm` | `0.7263` | `0.2936` | `0.5540` | training and NEC completed; localization pending |
+| `SAVLG conv4 alpha sweep best` | `0.85838` | `N/A` | `N/A` | inference-time alpha `0.1` and `0.3` tied on full test accuracy |
+
+Branch-calibration diagnostic for `conv4+conv5` (`alpha=0.2`, test split):
+- mean abs global logit: `9.3416`
+- mean abs spatial logit: `2.3233`
+- mean abs scaled spatial logit: `0.4647`
+- mean abs fused logit: `8.9688`
+- sign agreement fraction: `0.1573`
+- fraction where `|alpha * spatial| > |global|`: `0.0036`
+
+Interpretation:
+- `conv4` is best for dense performance.
+- `conv4+conv5` is the clear localization winner.
+- `conv5 + soft-align only` is the strongest completed conv5 classifier-side result so far.
+- The branch-calibration diagnostic suggests the main issue is not spatial dominance but poor sign agreement between global and spatial logits.
