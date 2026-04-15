@@ -961,8 +961,14 @@ def main():
         "--savlg_residual_spatial_pooling",
         type=str,
         default="lse",
-        choices=["lse"],
-        help="Pooling mode for residual SAVLG spatial logits. This stage allows only lse.",
+        choices=["lse", "avg", "topk"],
+        help="Pooling mode for residual SAVLG spatial logits.",
+    )
+    parser.add_argument(
+        "--savlg_residual_topk_fraction",
+        type=float,
+        default=0.2,
+        help="Patch fraction used when --savlg_residual_spatial_pooling=topk",
     )
     parser.add_argument(
         "--savlg_global_spatial_consistency_w",

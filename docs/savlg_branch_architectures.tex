@@ -1,0 +1,664 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.5em}
+
+\title{SAVLG-CBM Branch Architectures}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Purpose}
+This note describes the two branch architectures used in the current
+\texttt{SAVLG-CBM} implementation:
+\begin{itemize}
+    \item \textbf{shared branch architecture}
+    \item \textbf{dual branch architecture}
+\end{itemize}
+The key difference is whether the model uses one shared concept head for both
+global concept prediction and spatial grounding, or whether it uses separate
+global and spatial concept heads.
+
+\section{Common SAVLG Pipeline}
+For an image $x$, the visual backbone produces spatial feature tensors. Let
+\[
+\mathbf{f}_5 \in \mathbb{R}^{C_5 \times H_5 \times W_5}
+\]
+denote the final-stage feature map, and optionally let
+\[
+\mathbf{f}_4 \in \mathbb{R}^{C_4 \times H_4 \times W_4}
+\]
+denote an earlier feature map when a multiscale branch is used.
+
+For $K$ concepts, SAVLG produces:
+\begin{itemize}
+    \item a global concept logit vector
+    \[
+    \mathbf{c}_{\mathrm{global}} \in \mathbb{R}^{K},
+    \]
+    \item a spatial concept map tensor
+    \[
+    \mathbf{M} \in \mathbb{R}^{K \times H \times W},
+    \]
+    \item a pooled spatial concept vector
+    \[
+    \mathbf{c}_{\mathrm{spatial}} \in \mathbb{R}^{K},
+    \]
+    \item and the fused concept logits
+    \[
+    \mathbf{c}_{\mathrm{final}}
+    =
+    \mathbf{c}_{\mathrm{global}}
+    +
+    \alpha \, \mathbf{c}_{\mathrm{spatial}}.
+    \]
+\end{itemize}
+
+In the current implementation, the image-level concept BCE is applied to
+$\mathbf{c}_{\mathrm{final}}$, so the spatial branch participates directly in
+concept supervision through the residual fusion term.
+
+\section{Architecture 1: Shared Branch}
+\subsection{Definition}
+In the shared architecture, a single concept layer produces the spatial concept
+maps:
+\[
+\mathbf{M} = s(\mathbf{f}),
+\qquad
+\mathbf{M} \in \mathbb{R}^{K \times H \times W}.
+\]
+There is no separate global concept head. Instead, the same output tensor is
+used for both roles:
+\begin{itemize}
+    \item the spatial path keeps $\mathbf{M}$ as the localization map
+    \item the global path pools the same tensor to produce concept logits
+\end{itemize}
+
+Concretely, if the concept layer does not expose a separate
+\texttt{forward\_both(...)} method, the implementation reuses the same tensor
+for both outputs:
+\[
+\mathbf{G} = \mathbf{M},
+\qquad
+\mathbf{S} = \mathbf{M},
+\]
+where $\mathbf{G}$ denotes the tensor consumed by the global pooling path and
+$\mathbf{S}$ denotes the tensor consumed by the spatial path.
+Then the global concept logits are obtained by pooling the same map tensor:
+\[
+\mathbf{c}_{\mathrm{global}}
+=
+\operatorname{Pool}_{\mathrm{global}}(\mathbf{M}).
+\]
+
+\subsection{Computation Graph}
+The shared architecture therefore has the form:
+\[
+x \rightarrow \text{backbone} \rightarrow \mathbf{f}
+\rightarrow s(\cdot) \rightarrow \mathbf{M}
+\]
+\[
+\mathbf{c}_{\mathrm{global}}
+=
+\operatorname{Pool}_{\mathrm{global}}(\mathbf{M}),
+\qquad
+\mathbf{c}_{\mathrm{spatial}}
+=
+\operatorname{Pool}_{\mathrm{spatial}}(\mathbf{M}).
+\]
+Finally,
+\[
+\mathbf{c}_{\mathrm{final}}
+=
+\mathbf{c}_{\mathrm{global}}
++
+\alpha \mathbf{c}_{\mathrm{spatial}}.
+\]
+
+\subsection{Interpretation}
+This architecture forces one concept tensor to satisfy two jobs at once:
+\begin{itemize}
+    \item \textbf{semantic discrimination}: the pooled map must predict concept
+    presence well
+    \item \textbf{spatial faithfulness}: the map itself should align with the
+    annotated concept region
+\end{itemize}
+
+The advantage is simplicity. The disadvantage is coupling: the same parameters
+must optimize global prediction and localization simultaneously, which can make
+the representation less specialized.
+
+\section{Architecture 2: Dual Branch}
+\subsection{Definition}
+In the dual architecture, the model has two distinct heads:
+\begin{itemize}
+    \item a \textbf{global head} for concept prediction
+    \item a \textbf{spatial head} for concept localization
+\end{itemize}
+
+The implementation exposes this explicitly through:
+\[
+\texttt{forward\_global(...)} \quad \text{and} \quad \texttt{forward\_spatial(...)}.
+\]
+The forward pass returns
+\[
+\texttt{global\_outputs}, \texttt{spatial\_maps}
+=
+\texttt{forward\_both(...)}.
+\]
+
+\subsection{Split-Stage Dual Variant}
+The basic dual variant keeps the global path on conv5 features and allows the
+spatial path to use a configurable stage:
+\[
+\mathbf{c}_{\mathrm{global}} = g(\mathbf{f}_5),
+\qquad
+\mathbf{M} = s(\mathbf{f}_{\mathrm{spatial}}),
+\]
+where
+\[
+\mathbf{f}_{\mathrm{spatial}} \in \{\mathbf{f}_5, \mathbf{f}_4, \ldots\}.
+\]
+Thus, the global and spatial branches are separate even if they may read from
+the same or nearby backbone stages.
+
+\subsection{Multiscale conv4+conv5 Dual Variant}
+The most important dual specialization in this codebase is the
+\texttt{multiscale\_conv45} branch.
+
+\paragraph{Global path.}
+The global branch stays on conv5:
+\[
+\mathbf{c}_{\mathrm{global}} = g(\mathbf{f}_5).
+\]
+When the VLG-style global head is used, this is effectively:
+\[
+\bar{\mathbf{f}}_5 = \operatorname{GAP}(\mathbf{f}_5),
+\qquad
+\mathbf{c}_{\mathrm{global}} = W_g \bar{\mathbf{f}}_5 + b_g.
+\]
+
+\paragraph{Spatial path.}
+The spatial branch first fuses conv4 and conv5 features:
+\[
+\tilde{\mathbf{f}}_4 = W_4 * \mathbf{f}_4,
+\qquad
+\tilde{\mathbf{f}}_5 = \operatorname{Up}(W_5 * \mathbf{f}_5),
+\]
+\[
+\mathbf{f}_{\mathrm{fused}}
+=
+\operatorname{ReLU}(\tilde{\mathbf{f}}_4 + \tilde{\mathbf{f}}_5),
+\]
+and then applies the spatial concept head:
+\[
+\mathbf{M} = s(\mathbf{f}_{\mathrm{fused}}).
+\]
+
+So the dual multiscale model uses:
+\begin{itemize}
+    \item a dedicated \textbf{global conv5 head}
+    \item a dedicated \textbf{spatial multiscale conv4+conv5 head}
+\end{itemize}
+
+\subsection{Computation Graph}
+The dual architecture has the form:
+\[
+x \rightarrow \text{backbone} \rightarrow (\mathbf{f}_4,\mathbf{f}_5)
+\]
+\[
+\mathbf{c}_{\mathrm{global}} = g(\mathbf{f}_5),
+\qquad
+\mathbf{M} = s(\mathbf{f}_{\mathrm{spatial}} \text{ or } \mathbf{f}_{\mathrm{fused}}),
+\]
+\[
+\mathbf{c}_{\mathrm{spatial}}
+=
+\operatorname{Pool}_{\mathrm{spatial}}(\mathbf{M}),
+\qquad
+\mathbf{c}_{\mathrm{final}}
+=
+\mathbf{c}_{\mathrm{global}} + \alpha \mathbf{c}_{\mathrm{spatial}}.
+\]
+
+\subsection{Interpretation}
+The dual architecture allows specialization:
+\begin{itemize}
+    \item the global branch can remain close to a strong image-level concept
+    predictor, often warm-started from VLG
+    \item the spatial branch can focus on localization quality
+    \item the two branches are combined only at the concept-logit level
+\end{itemize}
+
+This separation is especially important when:
+\begin{itemize}
+    \item the user wants to freeze the global head
+    \item the global branch should preserve VLG semantics
+    \item the spatial branch should use a different stage or a multiscale fusion
+\end{itemize}
+
+\section{Global and Spatial Pooling}
+Once the spatial map tensor $\mathbf{M}$ is produced, the model pools it to
+obtain spatial concept logits. In the residual path, the implementation uses
+log-sum-exp pooling:
+\[
+c_{\mathrm{spatial},k}
+=
+\tau \log \sum_{u} \exp\!\left(M_{k,u}/\tau\right)
+- \tau \log |U|.
+\]
+This acts as a smooth max over locations.
+
+For the global path:
+\begin{itemize}
+    \item if the head already returns a vector, no extra pooling is needed
+    \item if the head returns maps, those maps are pooled to produce
+    $\mathbf{c}_{\mathrm{global}}$
+\end{itemize}
+
+\section{Main Conceptual Difference}
+The core distinction is:
+\begin{center}
+\begin{tabular}{@{}p{0.24\linewidth}p{0.33\linewidth}p{0.33\linewidth}@{}}
+\toprule
+Property & Shared & Dual \\
+\midrule
+Global head & implicit, reused from spatial maps & explicit dedicated head \\
+Spatial head & same tensor as global path & separate branch \\
+Specialization & weak & strong \\
+Supports VLG-style global warm-start cleanly & limited & yes \\
+Supports multiscale spatial fusion with separate global path & awkward & yes \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Key Differences in Practice}
+The architectural difference is not just a code-level refactor. It changes what
+the model is allowed to specialize.
+
+\subsection{Shared Branch}
+\begin{itemize}
+    \item One concept tensor must support both image-level concept prediction
+    and localization.
+    \item The pooled global concept logits are obtained from the same tensor that
+    is later interpreted as the spatial explanation map.
+    \item This is simpler, but it couples semantic discrimination and spatial
+    faithfulness tightly.
+\end{itemize}
+
+\subsection{Dual Branch}
+\begin{itemize}
+    \item The global branch has its own head and can stay close to a strong VLG
+    concept predictor.
+    \item The spatial branch has its own head and can use a different feature
+    source or a multiscale fused feature map.
+    \item This decouples classification quality from localization quality and
+    makes freezing or warm-starting the global branch much cleaner.
+\end{itemize}
+
+\subsection{Why this mattered empirically}
+In the recent \texttt{resnet18} reproduction work, the main recovery did not
+come from the outside penalty alone. The bigger gain came from restoring the
+older branch factorization:
+\begin{itemize}
+    \item \texttt{branch\_arch=dual}
+    \item \texttt{spatial\_branch\_mode=multiscale\_conv45}
+    \item VLG-style global warm-start
+    \item optional freezing of the global head
+\end{itemize}
+That combination recovered the stronger sparse results much more clearly than
+the newer shared-branch runs.
+
+\section{Observed Performance}
+Table~\ref{tab:branch-performance} summarizes the most relevant comparison from
+the recent \texttt{resnet18} experiments.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}p{0.34\linewidth}ccccc@{}}
+\toprule
+Run & Branch style & Outside & Full acc & ACC@5 & AVGACC \\
+\midrule
+Recent weak \texttt{conv5} run & shared & 0.0 & 0.7561 & 0.6929 & 0.7362 \\
+Old-style matched run & dual + multiscale\_conv45 & 0.0 & 0.7591 & 0.7566 & 0.7574 \\
+Old-style matched run & dual + multiscale\_conv45 & 0.25 & 0.7591 & 0.7577 & 0.7585 \\
+\bottomrule
+\end{tabular}
+\caption{Representative \texttt{resnet18 conv5} comparison. The main gap is not
+explained by outside penalty alone. Restoring the old dual-branch recipe
+recovers most of the lost sparse performance.}
+\label{tab:branch-performance}
+\end{table}
+
+\paragraph{Interpretation.}
+The full accuracies are all close, but the sparse accuracies are not. The
+shared-branch run stays around
+\[
+\text{AVGACC} \approx 0.736,
+\]
+whereas the old-style dual-branch reproductions recover
+\[
+\text{AVGACC} \approx 0.758.
+\]
+So the main practical difference is:
+\begin{itemize}
+    \item \textbf{shared} is simpler but underperforms on sparse concept
+    prediction
+    \item \textbf{dual} preserves a stronger global concept predictor while
+    allowing a specialized spatial branch
+\end{itemize}
+
+\section{Why the Dual Architecture Performed Better}
+The recent reproduction work suggests that the stronger older results were not
+explained by outside penalty alone. The more important change was restoring the
+older \emph{dual} branch recipe:
+\begin{itemize}
+    \item separate global and spatial heads
+    \item multiscale conv4+conv5 spatial fusion
+    \item VLG-style global warm-start
+    \item optional freezing of the global head
+\end{itemize}
+In other words, the main gain came from restoring a better branch factorization,
+while the outside penalty provided only a smaller additional improvement.
+
+\section{Summary}
+\begin{itemize}
+    \item The \textbf{shared} architecture uses one concept map tensor for both
+    global and spatial roles.
+    \item The \textbf{dual} architecture explicitly separates the global concept
+    path from the spatial localization path.
+    \item The multiscale conv4+conv5 model is a specialized \textbf{dual}
+    architecture: global on conv5, spatial on fused conv4+conv5.
+    \item The dual design better supports warm-starting, freezing, and branch
+    specialization, which matches the empirical recovery of the stronger older
+    \texttt{resnet18} results.
+\end{itemize}
+
+\section{Backbone Result Tables}
+This appendix collects the current headline performance and localization numbers
+for the two backbones used most heavily in this project. The localization
+protocols are not identical across all rows, so each table explicitly states the
+metric family being used.
+
+\subsection{ResNet-18: Cross-Method Summary}
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+Method & Full acc & ACC@5 & AVGACC & mean IoU & mAP@0.3 & mAP@0.5 & mAP@0.7 \\
+\midrule
+LF-CBM & 0.7402 & 0.5147 & 0.6817 & 0.0750 & 0.0366 & 0.0361 & 0.0364 \\
+SALF-CBM & 0.7320 & 0.5335 & 0.6826 & 0.0789 & 0.0306 & 0.0295 & 0.0287 \\
+VLG-CBM & 0.7594 & 0.7546 & 0.7556 & 0.0874 & 0.1054 & 0.0491 & 0.0288 \\
+SAVLG-CBM (best residual, $\alpha=0.20$) & 0.7606 & 0.7585 & 0.7585 & 0.1062 & 0.1174 & 0.0546 & 0.0313 \\
+\bottomrule
+\end{tabular}
+}
+\caption{ResNet-18 cross-method summary. Localization numbers here are the
+matched post-hoc Grad-CAM comparison from \texttt{docs/cub\_results.md}.}
+\label{tab:r18-cross-method}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Method & mean IoU & mAP@0.3 & mAP@0.5 & mAP@0.7 & point hit & coverage \\
+\midrule
+LF-CBM (Grad-CAM) & 0.0750 & 0.0366 & 0.0361 & 0.0364 & 0.5626 & 0.0334 \\
+SALF-CBM (Grad-CAM) & 0.0789 & 0.0306 & 0.0295 & 0.0287 & 0.7284 & 0.0446 \\
+VLG-CBM (Grad-CAM) & 0.0874 & 0.1054 & 0.0491 & 0.0288 & 0.8000 & 0.2536 \\
+SAVLG-CBM (Grad-CAM) & 0.1062 & 0.1174 & 0.0546 & 0.0313 & 0.9011 & 0.1341 \\
+\midrule
+SALF-CBM (native) & 0.0778 & 0.00645 & 0.00500 & 0.00456 & -- & -- \\
+SAVLG-CBM (native) & 0.2820 & 0.4268 & 0.1790 & 0.0356 & -- & -- \\
+\bottomrule
+\end{tabular}
+}
+\caption{\texttt{Resnet18} localization comparison. The first four rows are the
+strict matched \texttt{gt\_present} mean-threshold Grad-CAM comparison across
+\texttt{LF}, \texttt{SALF}, \texttt{VLG}, and \texttt{SAVLG}. The final two
+rows append the best available native-map references for \texttt{SALF} and
+\texttt{SAVLG}, so they should be read as native reference rows rather than as
+part of the matched Grad-CAM protocol.}
+\label{tab:r18-gradcam-localization}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}lccccccl@{}}
+\toprule
+Method / run & mean IoU & mAP@0.3 & mAP@0.5 & mAP@0.7 & point hit & coverage & Notes \\
+\midrule
+SALF-CBM (native pairwise artifact) & 0.0778 & 0.00645 & 0.00500 & 0.00456 & -- & -- & native SALF vs SAVLG comparator artifact \\
+SAVLG-CBM (native clean-global pairwise artifact) & 0.0233 & 0.00620 & 0.00505 & 0.00458 & -- & -- & paired with the SALF native artifact above \\
+SAVLG-CBM (best residual \texttt{conv4+conv5}) & 0.1309 & 0.1189 & 0.0656 & 0.0311 & 0.9889 & 0.3657 & strongest earlier native \texttt{resnet18} row from the residual line \\
+SAVLG-CBM (exact matched native rerun, \texttt{conv4+conv5}) & 0.2820 & 0.4268 & 0.1790 & 0.0356 & -- & -- & old native evaluator family, reproduced exactly \\
+\bottomrule
+\end{tabular}
+}
+\caption{\texttt{Resnet18} native-map localization references. \texttt{SALF}
+and \texttt{SAVLG} do not have a single fully matched native-map table covering
+all later \texttt{SAVLG} variants, so we separate the earlier paired
+\texttt{SALF}/clean-global-\texttt{SAVLG} artifact from the stronger later
+\texttt{SAVLG} residual native localizers. This table is useful for native-map
+context, but it is not a single strict four-method benchmark in the way
+Table~\ref{tab:r18-gradcam-localization} is.}
+\label{tab:r18-native-localization}
+\end{table}
+
+\subsection{ResNet-18: SAVLG Internal Ablations}
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+SAVLG variant & Full acc & ACC@5 & AVGACC & mean IoU & mAP@0.3 & mAP@0.5 & mAP@0.7 \\
+\midrule
+Soft-align + outside (warm-start frozen-global) & 0.7591 & 0.7549 & 0.7560 & 0.1246 & 0.0491 & 0.0336 & 0.0237 \\
+Residual-Alpha-0.05 & 0.7592 & 0.7560 & 0.7568 & 0.1309 & 0.1189 & 0.0656 & 0.0311 \\
+Residual-Alpha-0.10 & 0.7585 & 0.7572 & 0.7581 & 0.1307 & 0.1189 & 0.0657 & 0.0310 \\
+Residual-Alpha-0.05 + local-MIL & 0.7591 & 0.7563 & 0.7575 & 0.1216 & 0.0790 & 0.0434 & 0.0250 \\
+Residual conv5-only & 0.7592 & 0.7560 & 0.7567 & 0.1251 & 0.1168 & 0.0630 & 0.0312 \\
+Residual conv4-only & 0.7587 & 0.7547 & 0.7559 & 0.1445 & 0.1170 & 0.0710 & 0.0395 \\
+Old-style dual conv5, outside=0.25 & 0.7591 & 0.7577 & 0.7585 & pending & pending & pending & pending \\
+Old-style dual conv5, outside=0 & 0.7591 & 0.7566 & 0.7574 & 0.0543 & 0.0281 & 0.0034 & 0.00047 \\
+\bottomrule
+\end{tabular}
+}
+\caption{ResNet-18 SAVLG internal ablations. Native localization numbers are
+reported where they are already available; the old-style outside=0.25
+full-test localization rerun was interrupted before completion.}
+\label{tab:r18-savlg}
+\end{table}
+
+\subsection{ResNet-50: Backbone Summary}
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Method / run & Full acc & ACC@5 & AVGACC & Loc. metric @0.3 & Loc. metric @0.5 & Notes \\
+\midrule
+VLG-CBM (resnet50\_cub\_mm) & 0.8529 & 0.8501 & 0.8533 & 0.1373 & 0.0528 & Grad-CAM sweep \\
+SALF-CBM (resnet50\_cub\_mm) & 0.7263 & 0.2936 & 0.5540 & 0.0066 & 0.0051 & Grad-CAM mean-threshold \\
+SAVLG conv5 + cov025 & 0.8566 & 0.8558 & 0.8564 & 0.3301 & 0.1408 & MaxBoxAcc sweep \\
+SAVLG conv5 + cov050 & 0.8566 & 0.8544 & 0.8561 & 0.3207 & 0.1371 & MaxBoxAcc sweep \\
+SAVLG conv5 + dice010 & 0.8570 & 0.8558 & 0.8563 & 0.3393 & 0.1462 & MaxBoxAcc sweep \\
+SAVLG conv4 & 0.8584 & 0.8551 & 0.8559 & 0.3709 & 0.1573 & MaxBoxAcc sweep \\
+SAVLG conv4+conv5 & 0.8573 & 0.8565 & 0.8561 & 0.4467 & 0.2152 & best localization \\
+SAVLG conv5 soft-align only & 0.8615 & 0.8570 & 0.8568 & pending & pending & strongest conv5 classifier-side result \\
+\bottomrule
+\end{tabular}
+}
+\caption{ResNet-50 summary. SAVLG rows use native-map sweep metrics. VLG and
+SALF rows use the best available ResNet-50 Grad-CAM localization artifacts from
+the pod results directory, so this table mixes protocols and should be read as
+a broad comparison rather than a strictly matched localization benchmark.}
+\label{tab:r50-summary}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}lccccl@{}}
+\toprule
+Run & mean IoU & mAP@0.3 & mAP@0.5 & Full acc & Notes \\
+\midrule
+VLG-CBM (Grad-CAM, resnet50\_cub\_mm) & 0.1091 & 0.1373 & 0.0528 & 0.8529 & best available pod-side Grad-CAM sweep \\
+SALF-CBM (Grad-CAM, resnet50\_cub\_mm) & 0.0789 & 0.0066 & 0.0051 & 0.7263 & best available pod-side Grad-CAM artifact \\
+SAVLG conv5 + cov025 & 0.1824 & 0.3301 & 0.1408 & 0.8566 & baseline conv5 branch \\
+SAVLG conv5 + cov050 & 0.1793 & 0.3207 & 0.1371 & 0.8566 & stronger coverage did not help \\
+SAVLG conv5 + dice010 & 0.1854 & 0.3393 & 0.1462 & 0.8570 & best finished conv5 localization \\
+SAVLG conv4 & 0.2437 & 0.3709 & 0.1573 & 0.8584 & best dense run in the 5-run sweep \\
+SAVLG conv4+conv5 & 0.2822 & 0.4467 & 0.2152 & 0.8573 & best localization in the branch sweep \\
+SAVLG conv5 soft-align only & 0.1241 & pending & pending & 0.8615 & strongest completed conv5 classifier-side run \\
+SAVLG soft-align + outside penalty & 0.1246 & -- & -- & 0.7591 & frozen-global warm-start local-loss ablation \\
+SAVLG soft-align + local-MIL + outside & 0.1255 & -- & -- & 0.7591 & best reported ResNet-50 mean IoU \\
+\bottomrule
+\end{tabular}
+}
+\caption{Dedicated ResNet-50 SAVLG localization table. For the branch/loss sweep
+rows, mean IoU is the best value achieved over the explicit activation-threshold
+sweep, and the `mAP@0.3` / `mAP@0.5` columns correspond to the logged
+MaxBoxAcc sweep values at those IoU thresholds. The added VLG/SALF rows come
+from the best available pod-side Grad-CAM artifacts, so this table is useful
+for broad comparison but is not a perfectly matched single-protocol benchmark.}
+\label{tab:r50-localization-diagnostics}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{0.88\textwidth}{!}{
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Backbone & Checkpoint & mean IoU & mAP@0.3 & mAP@0.5 & Full acc \\
+\midrule
+\texttt{resnet18\_cub} & SAVLG dual \texttt{conv4+conv5} & 0.2820 & 0.4268 & 0.1790 & 0.7592 \\
+\texttt{resnet50\_cub\_mm} & SAVLG dual \texttt{conv4+conv5} & 0.2822 & 0.4469 & 0.2152 & 0.8573 \\
+\bottomrule
+\end{tabular}
+}
+\caption{Exact matched native-map comparison for the best SAVLG dual \texttt{conv4+conv5}
+checkpoint on \texttt{resnet18} and \texttt{resnet50}. Both rows use the same
+old native evaluator family, \texttt{map\_source=native},
+\texttt{map\_normalization=concept\_zscore\_minmax}, fixed threshold sweep
+\texttt{0.05..0.95}, \texttt{concept\_mode=intersection}, and
+\texttt{eval\_subset\_mode=gt\_present}. This is the clean apples-to-apples
+localization comparison between the two backbones.}
+\label{tab:conv45-r18-vs-r50-exact}
+\end{table}
+
+\subsection{Compact Cross-Backbone Method Comparison}
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}llccccc@{}}
+\toprule
+Backbone & Method & Full acc & ACC@5 & AVGACC & Loc.@0.3 & Loc.@0.5 \\
+\midrule
+\texttt{resnet18\_cub} & LF-CBM & 0.7402 & 0.5147 & 0.6817 & 0.0366 & 0.0361 \\
+\texttt{resnet18\_cub} & SALF-CBM & 0.7320 & 0.5335 & 0.6826 & 0.0306 & 0.0295 \\
+\texttt{resnet18\_cub} & VLG-CBM & 0.7594 & 0.7546 & 0.7556 & 0.1054 & 0.0491 \\
+\texttt{resnet18\_cub} & SAVLG-CBM (best residual) & 0.7606 & 0.7585 & 0.7585 & 0.1174 & 0.0546 \\
+\midrule
+\texttt{resnet50\_cub\_mm} & LF-CBM & N/A & N/A & N/A & N/A & N/A \\
+\texttt{resnet50\_cub\_mm} & SALF-CBM & 0.7263 & 0.2936 & 0.5540 & 0.0066 & 0.0051 \\
+\texttt{resnet50\_cub\_mm} & VLG-CBM & 0.8529 & 0.8501 & 0.8533 & 0.1373 & 0.0528 \\
+\texttt{resnet50\_cub\_mm} & SAVLG-CBM (best localization) & 0.8573 & 0.8565 & 0.8561 & 0.4467 & 0.2152 \\
+\bottomrule
+\end{tabular}
+}
+\caption{Compact cross-backbone comparison using only the headline method rows.
+For \texttt{resnet18}, localization columns are the matched Grad-CAM comparison.
+For \texttt{resnet50}, SAVLG localization uses native-map MaxBoxAcc sweep
+results, while VLG and SALF use the best available pod-side Grad-CAM
+artifacts. This table intentionally omits auxiliary SAVLG ablations such as
+local-MIL and intermediate residual variants.}
+\label{tab:compact-cross-backbone}
+\end{table}
+
+\subsection{All Methods Across Both Backbones}
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}llccccc@{}}
+\toprule
+Backbone & Method & Full acc & ACC@5 & AVGACC & Loc.@0.3 & Loc.@0.5 \\
+\midrule
+\texttt{resnet18\_cub} & LF-CBM & 0.7402 & 0.5147 & 0.6817 & 0.0366 & 0.0361 \\
+\texttt{resnet18\_cub} & SALF-CBM & 0.7320 & 0.5335 & 0.6826 & 0.0306 & 0.0295 \\
+\texttt{resnet18\_cub} & VLG-CBM & 0.7594 & 0.7546 & 0.7556 & 0.1054 & 0.0491 \\
+\texttt{resnet18\_cub} & SAVLG-CBM & 0.7606 & 0.7585 & 0.7585 & 0.1174 & 0.0546 \\
+\midrule
+\texttt{resnet50\_cub\_mm} & LF-CBM & N/A & N/A & N/A & N/A & N/A \\
+\texttt{resnet50\_cub\_mm} & SALF-CBM & 0.7263 & 0.2936 & 0.5540 & 0.0066 & 0.0051 \\
+\texttt{resnet50\_cub\_mm} & VLG-CBM & 0.8529 & 0.8501 & 0.8533 & 0.1373 & 0.0528 \\
+\texttt{resnet50\_cub\_mm} & SAVLG-CBM & 0.8573 & 0.8565 & 0.8561 & 0.4467 & 0.2152 \\
+\bottomrule
+\end{tabular}
+}
+\caption{All currently tracked headline method rows across the two main
+backbones. For \texttt{resnet18}, localization values are the matched
+cross-method Grad-CAM comparison. For \texttt{resnet50}, SAVLG localization
+values are native-map MaxBoxAcc sweep results, while VLG and SALF values come
+from the best available pod-side Grad-CAM artifacts.}
+\label{tab:all-methods-both-backbones}
+\end{table}
+
+\subsection{Residual Pooling Ablation}
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Pooling & Full acc & ACC@5 & AVGACC & Best mean IoU & Best Loc.@0.3 & Best Loc.@0.5 \\
+\midrule
+\texttt{lse} & 0.7591 & 0.7577 & 0.7585 & pending & pending & pending \\
+\texttt{avg} & 0.7606 & 0.7561 & 0.7576 & 0.05435 & 0.02805 & 0.00331 \\
+\texttt{topk (0.2)} & 0.7613 & 0.7566 & 0.7579 & 0.05435 & 0.02805 & 0.00331 \\
+\bottomrule
+\end{tabular}
+}
+\caption{Residual pooling ablation for the old-style dual \texttt{conv5}
+\texttt{resnet18} recipe with outside penalty. \texttt{avg} and
+\texttt{topk(0.2)} native-map localization were evaluated with an explicit
+threshold sweep.}
+\label{tab:pooling-ablation}
+\end{table}
+
+\paragraph{Main takeaways.}
+\begin{itemize}
+    \item On \texttt{resnet18}, the main step change came from restoring the
+    older dual-branch residual recipe, not from outside penalty alone.
+    \item On \texttt{resnet18}, residual \texttt{conv4}-only gives the strongest
+    native localization among the spatial-source ablations, while
+    \texttt{conv5}-only and multiscale remain strongest on sparse accuracy.
+    \item On \texttt{resnet50}, \texttt{conv4+conv5} is the clear localization
+    winner, while \texttt{conv5 + soft-align only} is the strongest completed
+    conv5 classifier-side run.
+\end{itemize}
+
+\end{document}

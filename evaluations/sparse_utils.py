@@ -14,10 +14,7 @@ from glm_saga.elasticnet import IndexedTensorDataset, glm_saga
 from methods.lf import TransformedSubset, use_original_label_free_protocol
 from methods.salf import SpatialBackbone, build_spatial_concept_layer
 from methods.savlg import (
-    CachedFeatureLabelDataset,
-    _savlg_feature_cache_enabled,
     build_savlg_concept_layer,
-    build_savlg_feature_cache_in_memory,
     compute_savlg_concept_logits,
     create_savlg_splits,
     forward_savlg_backbone,
@@ -353,8 +350,23 @@ def _extract_savlg_concept_components(args, backbone, concept_layer, loader):
     global_features = []
     spatial_features = []
     concept_labels = []
+    print(
+        f"[SAVLG NEC] start component extraction: batches={len(loader)} batch_size={getattr(loader, 'batch_size', 'na')}",
+        flush=True,
+    )
     with torch.no_grad():
-        for images, labels in tqdm(loader):
+        for batch_idx, (images, labels) in enumerate(tqdm(loader)):
+            if batch_idx == 0:
+                if isinstance(images, dict):
+                    shape_msg = {k: tuple(v.shape) for k, v in images.items()}
+                elif isinstance(images, torch.Tensor):
+                    shape_msg = tuple(images.shape)
+                else:
+                    shape_msg = type(images).__name__
+                print(
+                    f"[SAVLG NEC] first batch fetched: labels={tuple(labels.shape)} images={shape_msg}",
+                    flush=True,
+                )
             if isinstance(images, dict):
                 feats = {
                     key: value.to(args.device, non_blocking=True)
@@ -371,6 +383,11 @@ def _extract_savlg_concept_components(args, backbone, concept_layer, loader):
                 spatial_maps,
                 args,
             )
+            if batch_idx == 0:
+                print(
+                    f"[SAVLG NEC] first forward done: global={tuple(global_logits.shape)} spatial={tuple(spatial_logits.shape)}",
+                    flush=True,
+                )
             global_features.append(global_logits.cpu())
             spatial_features.append(spatial_logits.cpu())
             concept_labels.append(labels)
@@ -393,21 +410,23 @@ def _get_or_create_savlg_nec_components(
     concept_layer,
     dataset,
 ):
-    if _savlg_feature_cache_enabled(args):
-        cached = build_savlg_feature_cache_in_memory(args, backbone, dataset, split_name)
-        loader = DataLoader(
-            CachedFeatureLabelDataset(cached["feats"], cached["labels"]),
-            batch_size=args.cbl_batch_size,
-            shuffle=False,
-            num_workers=0,
-        )
-    else:
-        loader = DataLoader(
-            dataset,
-            batch_size=args.cbl_batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-        )
+    # For NEC we only need concept activations, not raw backbone features.
+    # Materializing whole-split backbone tensors causes heavy memory/page-cache
+    # pressure on the shared pod filesystem. Extract concepts directly once.
+    print(
+        f"[SAVLG NEC] preparing split={split_name} len={len(dataset)} cbl_batch_size={args.cbl_batch_size} num_workers={args.num_workers}",
+        flush=True,
+    )
+    loader_kwargs = {
+        "batch_size": args.cbl_batch_size,
+        "shuffle": False,
+        "num_workers": args.num_workers,
+        "pin_memory": True,
+    }
+    if int(getattr(args, "num_workers", 0)) > 0:
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = 4
+    loader = DataLoader(dataset, **loader_kwargs)
 
     global_concepts, spatial_concepts, labels = _extract_savlg_concept_components(
         args, backbone, concept_layer, loader
@@ -609,11 +628,13 @@ def sparsity_acc_test_savlg_cbm(
     max_glm_steps=MAX_GLM_STEP,
     cbl_batch_size=None,
     saga_batch_size=None,
+    num_workers=None,
     alpha_override=None,
     disable_activation_cache_override=False,
     max_images=None,
     branch_norm_mode="none",
 ):
+    print(f"[SAVLG NEC] loading run from {load_dir}", flush=True)
     with open(os.path.join(load_dir, "args.txt"), "r") as f:
         args = json.load(f)
         args = argparse.Namespace(**args)
@@ -621,6 +642,8 @@ def sparsity_acc_test_savlg_cbm(
         args.cbl_batch_size = cbl_batch_size
     if saga_batch_size is not None:
         args.saga_batch_size = saga_batch_size
+    if num_workers is not None:
+        args.num_workers = num_workers
     if disable_activation_cache_override:
         args.use_activation_cache = False
         args.disable_activation_cache = True
@@ -630,11 +653,18 @@ def sparsity_acc_test_savlg_cbm(
         concepts = f.read().split("\n")
     classes = data_utils.get_classes(args.dataset)
 
+    print("[SAVLG NEC] creating SAVLG splits", flush=True)
     _, _, train_dataset, val_dataset, test_dataset, backbone = create_savlg_splits(args)
+    print(
+        f"[SAVLG NEC] splits ready: train={len(train_dataset)} val={len(val_dataset)} test={len(test_dataset)}",
+        flush=True,
+    )
+    print("[SAVLG NEC] building concept layer", flush=True)
     concept_layer = build_savlg_concept_layer(args, backbone, len(concepts))
     concept_layer.load_state_dict(
         torch.load(os.path.join(load_dir, "concept_layer.pt"), map_location=args.device)
     )
+    print("[SAVLG NEC] concept layer loaded", flush=True)
 
     train_components = _get_or_create_savlg_nec_components(
         load_dir, "train", args, backbone, concept_layer, train_dataset

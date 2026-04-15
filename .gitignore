@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 
 .DS_Store
+results/.DS_Store
 
 .pytest_cache/
 .mypy_cache/
@@ -10,3 +11,6 @@ saved_models/
 annotations/
 runs/
 wandb/
+output/
+docs/*.aux
+docs/*.log

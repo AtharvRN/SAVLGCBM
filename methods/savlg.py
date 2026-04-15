@@ -38,13 +38,30 @@ def create_savlg_splits(args):
     if use_original_label_free_protocol(args):
         base_train_raw = data_utils.get_data(f"{args.dataset}_train", None)
         base_val_raw = data_utils.get_data(f"{args.dataset}_val", None)
+        print(
+            f"[create_savlg_splits] raw datasets ready train={len(base_train_raw)} val={len(base_val_raw)}",
+            flush=True,
+        )
         train_indices = list(range(len(base_train_raw)))
+        print(
+            f"[create_savlg_splits] train_indices ready n={len(train_indices)}",
+            flush=True,
+        )
         val_indices = list(range(len(base_val_raw)))
+        print(
+            f"[create_savlg_splits] val_indices ready n={len(val_indices)}",
+            flush=True,
+        )
         train_raw = RawSubset(base_train_raw, train_indices)
+        print("[create_savlg_splits] train_raw ready", flush=True)
         val_raw = RawSubset(base_val_raw, val_indices)
+        print("[create_savlg_splits] val_raw ready", flush=True)
         train_dataset = TransformedSubset(base_train_raw, train_indices, backbone.preprocess)
+        print("[create_savlg_splits] train_dataset ready", flush=True)
         val_dataset = TransformedSubset(base_val_raw, val_indices, backbone.preprocess)
+        print("[create_savlg_splits] val_dataset ready", flush=True)
         test_dataset = val_dataset
+        print("[create_savlg_splits] returning original LF protocol splits", flush=True)
         return train_raw, val_raw, train_dataset, val_dataset, test_dataset, backbone
 
     base_train_raw = data_utils.get_data(f"{args.dataset}_train", None)
@@ -454,7 +471,10 @@ def load_spatial_supervision(
         for ann in data[1:]:
             if not isinstance(ann, dict):
                 continue
-            cidx = concept_to_idx.get(ann.get("label"))
+            label = ann.get("label")
+            if isinstance(label, str):
+                label = data_utils.canonicalize_concept_label(label)
+            cidx = concept_to_idx.get(label)
             if cidx is None:
                 continue
             score = float(ann.get("logit", 0.0))
@@ -1198,17 +1218,32 @@ def savlg_residual_coupling_enabled(args) -> bool:
 
 def pool_residual_spatial_logits(map_logits: torch.Tensor, args) -> torch.Tensor:
     pooling = str(getattr(args, "savlg_residual_spatial_pooling", "lse")).lower()
-    if pooling != "lse":
-        raise ValueError(
-            f"Unsupported SAVLG residual spatial pooling mode: {pooling}. "
-            "This stage allows only lse."
-        )
     flat = map_logits.flatten(2)
-    temperature = float(getattr(args, "savlg_mil_temperature", 1.0))
-    temperature = max(temperature, 1e-6)
-    num_patches = flat.shape[-1]
-    pooled = temperature * torch.logsumexp(flat / temperature, dim=-1)
-    return pooled - temperature * math.log(max(num_patches, 1))
+    if pooling == "lse":
+        temperature = float(getattr(args, "savlg_mil_temperature", 1.0))
+        temperature = max(temperature, 1e-6)
+        num_patches = flat.shape[-1]
+        pooled = temperature * torch.logsumexp(flat / temperature, dim=-1)
+        return pooled - temperature * math.log(max(num_patches, 1))
+    if pooling == "avg":
+        return flat.mean(dim=-1)
+    if pooling == "topk":
+        num_patches = flat.shape[-1]
+        topk_fraction = float(
+            getattr(
+                args,
+                "savlg_residual_topk_fraction",
+                getattr(args, "savlg_mil_topk_fraction", 0.2),
+            )
+        )
+        topk_fraction = min(max(topk_fraction, 0.0), 1.0)
+        k = max(1, int(math.ceil(num_patches * topk_fraction)))
+        values, _ = flat.topk(k=k, dim=-1)
+        return values.mean(dim=-1)
+    raise ValueError(
+        f"Unsupported SAVLG residual spatial pooling mode: {pooling}. "
+        "Supported modes are lse, avg, and topk."
+    )
 
 
 def compute_savlg_concept_logits(

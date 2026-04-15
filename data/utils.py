@@ -1,5 +1,6 @@
 import json
 import os
+import glob
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -48,6 +49,19 @@ BACKBONE_VISUALIZATION_TARGET_LAYER = {
     "resnet18_cub": "features.stage4.unit2.body.conv2",
     "resnet50_cub": "features.stage4.unit3.body.conv3",
     "resnet50_cub_mm": "layer4.2.conv3",
+    "resnet50": "layer4.2.conv3",
+}
+
+# Conservative ImageNet annotation aliases for labels that otherwise stay
+# unmapped after the repo's standard concept normalization. Only add
+# aliases when the target phrase already exists in the current concept bank.
+IMAGENET_LABEL_ALIASES = {
+    "website": "a web page",
+    "beer bottle": "a bottle with a long neck",
+    "wine bottle": "a bottle with a long neck",
+    "soda bottle": "a glass or plastic bottle",
+    "ski": "a pair of skis",
+    "metal nail": "nails",
 }
 
 MM_RESNET50_CUB_CHECKPOINT_URL = (
@@ -245,7 +259,15 @@ def get_data(dataset_name, preprocess=None):
         )
         data.targets = data.labels
     elif dataset_name in DATASET_ROOTS.keys():
+        print(
+            f"[get_data] building ImageFolder for dataset_name={dataset_name} root={DATASET_ROOTS[dataset_name]}",
+            flush=True,
+        )
         data = datasets.ImageFolder(DATASET_ROOTS[dataset_name], preprocess)
+        print(
+            f"[get_data] ready ImageFolder for dataset_name={dataset_name} len={len(data)}",
+            flush=True,
+        )
     elif dataset_name == "imagenet_broden":
         data = torch.utils.data.ConcatDataset(
             [
@@ -262,6 +284,7 @@ def get_targets_only(dataset_name):
 
 
 def get_target_model(target_name, device):
+    print(f"[get_target_model] request target_name={target_name}", flush=True)
     if target_name.startswith("clip_"):
         target_name = target_name[5:]
         model, preprocess = clip.load(target_name, device=device)
@@ -279,7 +302,7 @@ def get_target_model(target_name, device):
         preprocess = get_resnet_imagenet_preprocess()
 
     elif target_name in {"resnet18_cub", "resnet50_cub"}:
-        target_model = ptcv_get_model(target_name, pretrained=True).to(device)
+        target_model = _load_ptcv_cub_model_from_local_cache(target_name, device)
         target_model.eval()
         preprocess = get_resnet_imagenet_preprocess()
 
@@ -313,6 +336,34 @@ def get_target_model(target_name, device):
     return target_model, preprocess
 
 
+def _load_ptcv_cub_model_from_local_cache(target_name: str, device):
+    print(f"[_load_ptcv_cub_model_from_local_cache] init target_name={target_name}", flush=True)
+    model = ptcv_get_model(target_name, pretrained=False).to(device)
+    print(f"[_load_ptcv_cub_model_from_local_cache] instantiated target_name={target_name}", flush=True)
+    cache_dir = os.path.expanduser("~/.torch/models")
+    patterns = [
+        os.path.join(cache_dir, f"{target_name}-*.pth"),
+        os.path.join(cache_dir, f"{target_name}-*.pt"),
+        os.path.join(cache_dir, f"{target_name}-*.pth.zip"),
+    ]
+    matches = []
+    for pattern in patterns:
+        matches.extend(sorted(glob.glob(pattern)))
+    if matches:
+        print(f"[_load_ptcv_cub_model_from_local_cache] loading state from {matches[0]}", flush=True)
+        state_dict = torch.load(matches[0], map_location="cpu")
+        if isinstance(state_dict, dict) and "state_dict" in state_dict:
+            state_dict = state_dict["state_dict"]
+        model.load_state_dict(state_dict)
+        print(f"[_load_ptcv_cub_model_from_local_cache] loaded target_name={target_name}", flush=True)
+        return model
+    logger.info(
+        "No local cached weights found for {} under ~/.torch/models; falling back to pytorchcv pretrained load.",
+        target_name,
+    )
+    return ptcv_get_model(target_name, pretrained=True).to(device)
+
+
 def format_concept(s):
     # replace - with ' '
     # replace , with ' '
@@ -332,6 +383,12 @@ def format_concept(s):
     s = " ".join(s.split())
     return s
 
+
+def canonicalize_concept_label(s: str) -> str:
+    normalized = format_concept(s)
+    aliased = IMAGENET_LABEL_ALIASES.get(normalized, normalized)
+    return format_concept(aliased)
+
 def get_classes(dataset_name):
     with open(LABEL_FILES[dataset_name], "r") as f:
         classes = f.read().split("\n")
@@ -343,14 +400,14 @@ def get_concepts(concept_file: str, filter_file:Optional[str]=None) -> List[str]
         concepts: List[str] = f.read().split("\n")
 
     # remove repeated concepts and maintain order
-    concepts = list(dict.fromkeys([format_concept(concept) for concept in concepts]))
+    concepts = list(dict.fromkeys([canonicalize_concept_label(concept) for concept in concepts]))
 
     # check for filter file
     if filter_file and os.path.exists(filter_file):
         logger.info(f"Filtering concepts using {filter_file}")
         with open(filter_file) as f:
             to_filter_concepts = f.read().split("\n")
-        to_filter_concepts = [format_concept(concept) for concept in to_filter_concepts]
+        to_filter_concepts = [canonicalize_concept_label(concept) for concept in to_filter_concepts]
         concepts = [concept for concept in concepts if concept not in to_filter_concepts]
 
     return concepts
@@ -381,14 +438,14 @@ def load_concept_and_count(
             concept = line.split(" ")[:-1]
             concept = " ".join(concept)
             count = line.split(" ")[-1]
-            concepts.append(format_concept(concept))
+            concepts.append(canonicalize_concept_label(concept))
             counts.append(float(count))
 
     if filter_file and os.path.exists(filter_file):
         with open(filter_file) as f:
             logger.info(f"Filtering concepts using {filter_file}")
             to_filter_concepts = f.read().split("\n")
-        to_filter_concepts = [format_concept(concept) for concept in to_filter_concepts]
+        to_filter_concepts = [canonicalize_concept_label(concept) for concept in to_filter_concepts]
         counts = [count for concept, count in zip(concepts, counts) if concept not in to_filter_concepts]
         concepts = [concept for concept in concepts if concept not in to_filter_concepts]
         assert len(concepts) == len(counts)

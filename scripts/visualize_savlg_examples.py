@@ -94,7 +94,10 @@ def _load_gt_boxes(annotation_dir: str, ann_idx: int, concept_name: str):
     for ann in payload[1:]:
         if not isinstance(ann, dict):
             continue
-        if ann.get("label") != concept_name:
+        label = ann.get("label")
+        if isinstance(label, str):
+            label = data_utils.canonicalize_concept_label(label)
+        if label != concept_name:
             continue
         box = ann.get("box")
         if isinstance(box, list) and len(box) == 4:

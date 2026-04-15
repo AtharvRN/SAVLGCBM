@@ -22,6 +22,7 @@ parser.add_argument("--n_iters", type=int, default=None)
 parser.add_argument("--max_glm_steps", type=int, default=None)
 parser.add_argument("--cbl_batch_size", type=int, default=None)
 parser.add_argument("--saga_batch_size", type=int, default=None)
+parser.add_argument("--num_workers", type=int, default=None)
 parser.add_argument("--savlg_alpha_override", type=float, default=None)
 parser.add_argument("--disable_activation_cache", action="store_true")
 parser.add_argument("--max_images", type=int, default=None)
@@ -61,6 +62,7 @@ elif model_name == "savlg_cbm":
         max_glm_steps=args.max_glm_steps if args.max_glm_steps is not None else 150,
         cbl_batch_size=args.cbl_batch_size,
         saga_batch_size=args.saga_batch_size,
+        num_workers=args.num_workers,
         alpha_override=args.savlg_alpha_override,
         disable_activation_cache_override=args.disable_activation_cache,
         max_images=args.max_images,

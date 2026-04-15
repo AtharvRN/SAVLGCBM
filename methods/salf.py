@@ -101,8 +101,16 @@ class SpatialBackbone(nn.Module):
             self.output_dim = clip_backbone.output_dim
             self.stage_dims = {"conv5": clip_backbone.output_dim}
             return
-        if backbone_name in {"resnet18_cub", "resnet50_cub", "resnet50_cub_mm"}:
+        if backbone_name in {"resnet18_cub", "resnet50_cub", "resnet50_cub_mm", "resnet50"}:
+            print(
+                f"[SpatialBackbone] loading backbone={backbone_name} stage={spatial_stage}",
+                flush=True,
+            )
             target_model, preprocess = data_utils.get_target_model(backbone_name, device)
+            print(
+                f"[SpatialBackbone] target model ready for backbone={backbone_name}",
+                flush=True,
+            )
             if hasattr(target_model, "features"):
                 feature_children = list(target_model.features.children())
                 self.res_init = feature_children[0].to(device).float().eval()
@@ -139,7 +147,7 @@ class SpatialBackbone(nn.Module):
             self.output_dim = self.stage_dims[spatial_stage]
             return
         raise NotImplementedError(
-            f"SALF first pass currently supports only clip_RN50, resnet18_cub, resnet50_cub, and resnet50_cub_mm as spatial backbones, got {backbone_name}."
+            f"SALF first pass currently supports only clip_RN50, resnet18_cub, resnet50_cub, resnet50_cub_mm, and resnet50 as spatial backbones, got {backbone_name}."
         )
 
     def get_stage_dim(self, stage_name: str) -> int:
@@ -197,14 +205,14 @@ class SpatialBackbone(nn.Module):
                 )
             conv5 = self.backbone(x.to(self.device)).float()
             return {"conv5": conv5}
-        if self.backbone_name in {"resnet18_cub", "resnet50_cub", "resnet50_cub_mm"}:
+        if self.backbone_name in {"resnet18_cub", "resnet50_cub", "resnet50_cub_mm", "resnet50"}:
             return self._forward_resnet_cub_stages(x, stage_names)
         raise NotImplementedError(
             f"Unsupported multistage request for backbone={self.backbone_name}."
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.backbone_name in {"resnet18_cub", "resnet50_cub", "resnet50_cub_mm"}:
+        if self.backbone_name in {"resnet18_cub", "resnet50_cub", "resnet50_cub_mm", "resnet50"}:
             return self._forward_resnet_cub_stages(x, [self.spatial_stage])[self.spatial_stage]
         return self.backbone(x.to(self.device)).float()
 

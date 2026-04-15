@@ -9,9 +9,12 @@ def get_train_handler(model_name: str) -> Callable:
         from methods.lf import train_lf_cbm
 
         return train_lf_cbm
-    if model_name in ("salf_cbm", "savlg_cbm"):
-        raise NotImplementedError(
-            f"{model_name} is planned in this unified codebase but has not been ported yet."
-        )
-    raise ValueError(f"Unsupported model_name: {model_name}")
+    if model_name == "salf_cbm":
+        from methods.salf import train_salf_cbm
 
+        return train_salf_cbm
+    if model_name == "savlg_cbm":
+        from methods.savlg import train_savlg_cbm
+
+        return train_savlg_cbm
+    raise ValueError(f"Unsupported model_name: {model_name}")

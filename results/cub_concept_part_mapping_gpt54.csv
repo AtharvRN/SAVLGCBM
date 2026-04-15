@@ -1,0 +1,724 @@
+concept,keep,part_group,exact_parts,rationale
+"long, black bill",True,beak,beak,Bill maps cleanly to beak.
+a wingspan of up to 3.5 feet,False,,,"Describes overall size/extent, not a localized annotated part."
+a white face and underparts,False,,,"Refers to multiple/vague regions, not one supported part."
+a raucous call,False,,,"Behavioral/audio trait, not a body part."
+pattern,False,,,Too abstract and not localized to one part.
+"fast, erratic flight patterns",False,,,"Behavioral trait, not a body part."
+a red head,False,,,"Head spans multiple supported parts, so not cleanly mappable."
+a white patch on the wing,True,wing,left wing|right wing,Localized to the wing.
+a yellow bill,True,beak,beak,Bill maps cleanly to beak.
+a small beak,True,beak,beak,Directly describes the beak.
+color,False,,,Abstract attribute with no localized part.
+rusty-brown feathers,False,,,Feathers are not tied to one supported part.
+"a small, stocky body",False,,,"Whole-body description, not one supported part."
+"a small, slim body",False,,,"Whole-body description, not one supported part."
+A long curved bill,True,beak,beak,Bill maps cleanly to beak.
+a vibrant blue plumage,False,,,"Global plumage trait, not one localized part."
+"a small, green body",False,,,"Whole-body description, not one supported part."
+a black wingtip,False,,,Too specific relative to the whole wing annotation.
+a streaked back,True,back,back,Directly describes the back.
+a long tail with white bars,True,tail,tail,Primarily describes the tail.
+shiny black eyes,True,eye,left eye|right eye,Directly describes the eyes.
+a black face,False,,,Face is a vague unsupported region.
+orange legs,True,leg,left leg|right leg,Directly describes the legs.
+black wings with white stripes,True,wing,left wing|right wing,Primarily describes the wings.
+a slender body,False,,,"Whole-body shape, not one supported part."
+"loud, rasping voice",False,,,"Behavioral/audio trait, not a body part."
+spotted feathers,False,,,Feathers are not tied to one supported part.
+a black head,False,,,"Head spans multiple supported parts, so not cleanly mappable."
+a black beak,True,beak,beak,Directly describes the beak.
+a black mask around the eyes,False,,,"Covers area around eyes, not the eye part itself."
+a red crest on the head,False,,,Crest is not a supported part group.
+black plumage,False,,,"Global plumage trait, not one localized part."
+a black and white color scheme,False,,,"Global color pattern, not one localized part."
+"a small, shy bird",False,,,"Whole-animal/behavior description, not a body part."
+a white stripe above the eye,False,,,Region above the eye is not the eye part itself.
+a white chest and belly,False,,,Refers to multiple parts at once.
+"a small, songbird",False,,,"Whole-animal category/size, not a body part."
+a brown back,True,back,back,Directly describes the back.
+blue wings with white bars,True,wing,left wing|right wing,Primarily describes the wings.
+"a small, brown bird",False,,,"Whole-animal description, not one supported part."
+a black tail,True,tail,tail,Directly describes the tail.
+a large blue-grey bird,False,,,"Whole-animal description, not one supported part."
+"a large, seabird",False,,,"Whole-animal category/size, not a body part."
+A red eye,True,eye,left eye|right eye,Directly describes the eye.
+white body with grey wings,False,,,"Mixes whole body with wing, so not one part."
+white wingbars,True,wing,left wing|right wing,Wingbars are markings on the wing.
+"a large, stocky body",False,,,"Whole-body description, not one supported part."
+white patch on neck,False,,,Neck is not a supported coarse part group.
+a rectangular shape,False,,,"Abstract shape trait, not a localized part."
+a brown tail,True,tail,tail,Directly describes the tail.
+"a small, sparrow-like body",False,,,"Describes overall body form, not one supported part."
+a pale stripe above the eye,False,,,"Refers to eyebrow/supercilium region, not a supported part label."
+yellowish-green legs,True,leg,left leg|right leg,Directly describes the legs.
+a blue-grey back,True,back,back,Directly describes the back.
+"a small, thrush-like bird",False,,,"Describes whole bird type/size, not one part."
+"a short, stout bill",True,beak,beak,Bill maps cleanly to beak.
+black wings with orange bars,True,wing,left wing|right wing,Primarily describes the wings.
+a small body,False,,,Body is too broad and unsupported.
+a red ring around the eye,True,eye,left eye|right eye,Cleanly centered on the eye region.
+grayish wings,True,wing,left wing|right wing,Directly describes the wings.
+a medium sized bird,False,,,"Overall size, not a localized part."
+a black cap on the female,True,crown,crown,Cap maps to crown.
+a red throat,True,throat,throat,Directly describes the throat.
+black wings,True,wing,left wing|right wing,Directly describes the wings.
+white underparts,False,,,Underparts spans multiple regions and is too vague.
+a black band across the belly,True,belly,belly,Primarily localized to the belly.
+a rusty-brown back,True,back,back,Directly describes the back.
+black tail,True,tail,tail,Directly describes the tail.
+black and orange feathers,False,,,Feathers are not localized to one supported part.
+"a long, thin bill",True,beak,beak,Bill maps cleanly to beak.
+brown and gray plumage,False,,,"Plumage is overall coloration, not one part."
+a black head and upperparts,False,,,Covers multiple unsupported regions.
+long tail,True,tail,tail,Directly describes the tail.
+a white wingbar,True,wing,left wing|right wing,Wingbar is a marking on the wing.
+"a short, thick neck",False,,,Neck is not a supported part group.
+a wingspan of 3-4 feet,False,,,"Overall size measurement, not a localized part."
+a yellow-tipped tail,True,tail,tail,Primarily describes the tail.
+a black tail with white tips,True,tail,tail,Primarily describes the tail.
+"a small, thin beak",True,beak,beak,Directly describes the beak.
+"a long, thick beak",True,beak,beak,Directly describes the beak.
+black streaks on the wings,True,wing,left wing|right wing,Primarily describes the wings.
+long hind legs for jumping,True,leg,left leg|right leg,Directly describes the legs.
+"yellow or white ""eyebrows""",False,,,Eyebrow/supercilium is not a supported part group.
+a black mask,False,,,"Mask refers to face region, which is unsupported."
+yellow throat and breast,False,,,"Covers two supported parts, not one."
+"a long, slender neck",False,,,Neck is not a supported part group.
+a brown breast,True,breast,breast,Directly describes the breast.
+yellowish-brown wings,True,wing,left wing|right wing,Directly describes the wings.
+"a large, black body",False,,,Body is too broad and unsupported.
+gray plumage,False,,,"Plumage is overall coloration, not one part."
+shy and secretive behavior,False,,,Behavior is non-spatial and not a part.
+a hooked bill,True,beak,beak,Bill maps cleanly to beak.
+a small mouth,False,,,Mouth is not a supported part group.
+a black cap on the head,True,crown,crown,Cap maps to crown.
+black beak,True,beak,beak,Directly describes the beak.
+grey legs and feet,False,,,"Includes feet, which are unsupported."
+white body,False,,,Body is too broad and unsupported.
+"a short, pointed beak",True,beak,beak,Directly describes the beak.
+a white throat and belly,False,,,"Covers two supported parts, not one."
+a black mask over its eyes,False,,,Mask spans the face/eye area and does not cleanly match one supported part.
+a dark coloration,False,,,"Describes overall coloration, not one supported part."
+a curved beak,True,beak,beak,Directly describes the beak.
+a yellow head and throat,False,,,"Refers to multiple parts, including unsupported head as a whole."
+brown and black feathers,False,,,"General plumage description, not one supported part."
+a hooked beak,True,beak,beak,Directly describes the beak.
+hooked beak,True,beak,beak,Directly describes the beak.
+short wings,True,wing,left wing|right wing,Directly describes the wings.
+"a large, black spider",False,,,Not a bird part concept.
+a white or pale gray body,False,,,Body is too broad and unsupported.
+pale gray upperparts,False,,,Upperparts is a vague multi-part region.
+"Long, slim body",False,,,Body is too broad and unsupported.
+orange and black wings,True,wing,left wing|right wing,Directly describes the wings.
+"a thin, pointy bill",True,beak,beak,Bill maps cleanly to beak.
+a white wing bar,False,,,"Wing bar is a subregion/pattern, not the whole wing annotation."
+"long, red legs",True,leg,left leg|right leg,Directly describes the legs.
+a green body,False,,,Body is too broad and unsupported.
+"a large, green head",False,,,Head is unsupported as a single part.
+green head,False,,,Head is unsupported as a single part.
+grey legs,True,leg,left leg|right leg,Directly describes the legs.
+a streaked head,False,,,Head is unsupported as a single part.
+a white breast,True,breast,breast,Directly describes the breast.
+a duck-like bird,False,,,"Describes whole-bird appearance, not one part."
+a built-in keyboard,False,,,Not a bird part concept.
+a brown or gray body,False,,,Body is too broad and unsupported.
+webbed toes,False,,,Toes/feet are unsupported parts.
+a large bill,True,beak,beak,Bill maps cleanly to beak.
+olive-colored sides,False,,,"Sides is a vague body region, not supported."
+"a long, forked tail",True,tail,tail,Directly describes the tail.
+a black band across the eyes,False,,,"Spans across both eyes as a facial pattern, not the eye part itself."
+a bright green body,False,,,Body is too broad and unsupported.
+a black eye-stripe,False,,,"Eye-stripe is a facial pattern, not the eye part itself."
+large feet,False,,,Feet are unsupported parts.
+a gray crown,True,crown,crown,Directly describes the crown.
+a forked tail,True,tail,tail,Directly describes the tail.
+a pink bill,True,beak,beak,Bill maps cleanly to beak.
+a white front,False,,,"Front is a vague region, not a supported part."
+"a small, plump body",False,,,Body is too broad and unsupported.
+A long tail,True,tail,tail,Directly describes the tail.
+a black mask over the eyes,False,,,Mask is a facial pattern spanning multiple areas.
+"a large, conical bill",True,beak,beak,Bill maps cleanly to beak.
+a brownish back,True,back,back,Directly describes the back.
+a black and white striped tail,True,tail,tail,Directly describes the tail.
+a light-colored belly,True,belly,belly,Directly describes the belly.
+a brown cap and white eyebrows,False,,,Refers to multiple parts and eyebrows are unsupported.
+greenish-yellow legs,True,leg,left leg|right leg,Directly describes the legs.
+a rusty-brown breast band,False,,,"Breast band is a subregion/pattern, not the whole breast annotation."
+a white eyebrow,False,,,Eyebrow is unsupported.
+a high dispersion,False,,,Abstract non-spatial trait.
+all black feathers,False,,,"General plumage description, not one supported part."
+yellow eyes,True,eye,left eye|right eye,Directly describes the eyes.
+a glossy sheen to its feathers,False,,,"Describes overall feather quality, not one supported part."
+a black tail with white sides,True,tail,tail,Primarily describes the tail.
+a buffy breast,True,breast,breast,Directly describes the breast.
+yellow bill,True,beak,beak,Bill maps cleanly to beak.
+"a long, sharp bill",True,beak,beak,Bill maps cleanly to beak.
+red legs,True,leg,left leg|right leg,Directly describes the legs.
+bright golden-yellow plumage,False,,,"Overall plumage color, not one supported part."
+a white eye-ring,True,eye,left eye|right eye,Eye-ring is localized around the eye.
+a white bar on the wing,True,wing,left wing|right wing,Primarily localized on the wing.
+grayish brown body,False,,,Body is too vague and unsupported.
+a Mohs hardness of 10,False,,,Not a bird part trait.
+"a large, sparrow-like bird",False,,,"Describes whole bird size/type, not a part."
+spotted plumage,False,,,"Overall plumage pattern, not one supported part."
+blue-gray wings,True,wing,left wing|right wing,Directly describes the wings.
+a white or pale underside,False,,,Underside is a vague multi-part region.
+"long, webbed feet",False,,,Feet are unsupported and not cleanly mappable to leg.
+a brown or gray plumage,False,,,"Overall plumage color, not one supported part."
+"small, slim body",False,,,Body is vague and describes overall shape.
+a orange breast and belly,False,,,Refers to two supported parts at once.
+a black streak on the head,False,,,Head is too vague; could span multiple supported parts.
+a white chest,True,breast,breast,Chest aligns best with breast.
+"a long, black and white tail",True,tail,tail,Directly describes the tail.
+a tail with a distinct V-shape,True,tail,tail,Directly describes the tail.
+a long tail,True,tail,tail,Directly describes the tail.
+a black and white plumage,False,,,"Overall plumage pattern, not one supported part."
+mottled grey and white plumage,False,,,"Overall plumage pattern, not one supported part."
+gray or olive-gray upperparts,False,,,Upperparts is a vague multi-part region.
+a white tail with a black tip,True,tail,tail,Primarily describes the tail.
+brown and gray feathers,False,,,Feathers are not one supported localized part.
+black feet,False,,,Feet are unsupported.
+a crest on the head,False,,,Crest does not map cleanly to one supported head part.
+wing bars,True,wing,left wing|right wing,Localized marking on the wing.
+a black patch on the back,True,back,back,Directly describes the back.
+white spots on the wings,True,wing,left wing|right wing,Directly describes the wings.
+a small head,False,,,Head is too vague and unsupported as a coarse group.
+a yellowish belly,True,belly,belly,Directly describes the belly.
+black legs and feet,False,,,Mixes supported legs with unsupported feet.
+"Long, hooked bill",True,beak,beak,Bill maps cleanly to beak.
+pale gray or white color,False,,,Too generic; not tied to one supported part.
+black and white plumage,False,,,"Overall plumage pattern, not one supported part."
+three toes on each foot,False,,,Foot/toes are unsupported.
+a rusty-brown cap,True,crown,crown,Cap aligns with the crown.
+a Scarlet-red body,False,,,Body is too vague and unsupported.
+a red body,False,,,Body is too vague and unsupported.
+"a small, black head",False,,,Head is too vague and unsupported as a coarse group.
+a reddish-brown color,False,,,Too generic; not tied to one supported part.
+"long, thin antennae",False,,,Antennae are not bird parts in CUB.
+pale pink legs and feet,False,,,Mixes supported legs with unsupported feet.
+white and black coloration,False,,,"Global coloration, not one supported part."
+"a small, conical bill",True,beak,beak,Bill maps cleanly to beak.
+a streaked brown plumage,False,,,"Describes overall plumage, not one supported part."
+a black cheek patch,False,,,Cheek is not a supported CUB part group.
+pale brown upperparts,False,,,Upperparts is a vague multi-part region.
+a black ring around the bill,False,,,Around the bill is not the beak itself and does not map cleanly to one part.
+a brownish-gray upper body,False,,,Upper body is a vague multi-part region.
+"a thin, pointed beak",True,beak,beak,Directly describes the beak.
+a brown back with dark streaks,True,back,back,Directly describes the back.
+"long, black legs",True,leg,left leg|right leg,Directly describes the legs.
+a brown cap with a white cheek,False,,,Combines crown with unsupported cheek.
+"a long, hooked beak",True,beak,beak,Directly describes the beak.
+a streaked chest,True,breast,breast,Chest aligns to the breast region.
+A blue sheen on the wings,True,wing,left wing|right wing,Directly describes the wings.
+a black band on the wing,True,wing,left wing|right wing,Maps to the wing as the supported coarse part.
+"a small, slim bird",False,,,Describes whole-bird size and build.
+two white bars on wings,True,wing,left wing|right wing,Directly describes the wings.
+greenish-yellow upperparts,False,,,Upperparts is a vague multi-part region.
+dark blue-gray upperparts,False,,,Upperparts is a vague multi-part region.
+a yellow breast,True,breast,breast,Directly describes the breast.
+a dark blue-black upper body,False,,,Upper body is a vague multi-part region.
+a black cap,True,crown,crown,Cap aligns to the crown.
+a black head and back,False,,,Head and back spans multiple parts.
+"a long, thick bill",True,beak,beak,Bill maps to beak.
+long black tail,True,tail,tail,Directly describes the tail.
+"a long, slender beak",True,beak,beak,Directly describes the beak.
+a yellow body,False,,,Body is too broad and unsupported.
+a black cap and back,False,,,"Combines crown and back, so not one part."
+white coloration on the body,False,,,Body is too broad and unsupported.
+two white bars on the wings,True,wing,left wing|right wing,Directly describes the wings.
+"a long, yellow bill",True,beak,beak,Bill maps to beak.
+a large head,False,,,Head is not a supported coarse part.
+a black and white striped head,False,,,Head spans multiple unsupported/supported subparts.
+"long, brown legs",True,leg,left leg|right leg,Directly describes the legs.
+long wings,True,wing,left wing|right wing,Directly describes the wings.
+a white crown,True,crown,crown,Directly describes the crown.
+eyes are yellow,True,eye,left eye|right eye,Directly describes the eyes.
+"long, white legs",True,leg,left leg|right leg,Directly describes the legs.
+a brown or bronzy plumage,False,,,"Describes overall plumage, not one supported part."
+orange-yellow legs,True,leg,left leg|right leg,Directly describes the legs.
+a black stripe down its neck,False,,,Neck does not map cleanly to one supported part.
+a grayish-brown head,False,,,Head is not a supported coarse part.
+"a hard, crystalline structure",False,,,Not a bird part annotation concept.
+iridescent blue-green back,True,back,back,Directly describes the back.
+dark streaks on the breast,True,breast,breast,Directly describes the breast.
+grey sides,False,,,Sides is not a supported coarse part.
+brown and white feathers,False,,,Feathers are general and not one supported part.
+"a broad, round beak",True,beak,beak,Directly describes the beak.
+pale pink legs,True,leg,left leg|right leg,Directly describes the legs.
+green plumage,False,,,"Describes overall plumage, not one supported part."
+a brown or gray back,True,back,back,Directly describes the back.
+white body with gray wings,False,,,"Combines unsupported body with wing, so not one part."
+black and white tail feathers,True,tail,tail,Directly describes the tail.
+white undersides,False,,,"Undersides is a vague multi-part region, not one supported part."
+a small bill,True,beak,beak,Bill maps cleanly to beak.
+a gray head,False,,,"Head spans multiple supported parts, not one coarse part."
+"short, dark legs",True,leg,left leg|right leg,Directly describes the legs.
+"long, thin legs",True,leg,left leg|right leg,Directly describes the legs.
+a white body with gray wings,False,,,"Refers to body plus wings, so multiple parts."
+green and white plumage,False,,,"Plumage is whole-bird coloration, not one supported part."
+a black or dark grey plumage,False,,,"Plumage is whole-bird coloration, not one supported part."
+yellowish upperparts,False,,,Upperparts is a vague multi-part region.
+a long tail with a black tip,True,tail,tail,Primarily describes the tail.
+beak and legs are black,False,,,Describes multiple supported parts at once.
+orange throat,True,throat,throat,Directly describes the throat.
+a large body,False,,,Body is unsupported and too broad.
+white undertail feathers,True,tail,tail,Undertail feathers align to the tail region.
+iridescent black feathers,False,,,"Feathers is generic whole-plumage description, not one part."
+a grayish-brown body,False,,,Body is unsupported and too broad.
+a green back,True,back,back,Directly describes the back.
+a pointed beak,True,beak,beak,Directly describes the beak.
+a red belly,True,belly,belly,Directly describes the belly.
+"a short, black bill",True,beak,beak,Bill maps cleanly to beak.
+"a long, narrow tail",True,tail,tail,Directly describes the tail.
+"a glossy, black plumage",False,,,"Plumage is a global trait, not one supported part."
+a small black bill,True,beak,beak,Bill maps cleanly to beak.
+"a small, blue bird",False,,,"Describes the whole bird, not one part."
+a dark gray back,True,back,back,Directly describes the back.
+"a small, sleek body",False,,,Body is unsupported and shape-like.
+shape,False,,,"Abstract trait, not a localizable supported part."
+"a long, deeply forked tail",True,tail,tail,Directly describes the tail.
+white undertail coverts,True,tail,tail,Undertail coverts align best with the tail region.
+a white body,False,,,Body is unsupported and too broad.
+brown streaks on the sides,False,,,"Sides is a vague body region, not one supported part."
+shaggy appearance,False,,,Appearance is abstract and not tied to one supported part.
+"a long, snake-like neck",False,,,Neck is not a supported coarse part group.
+a black stripe on the wing,True,wing,left wing|right wing,Primarily describes the wing.
+"a long, notched tail",True,tail,tail,Directly describes the tail.
+white stripes above the eyes,False,,,"Above the eyes maps to forehead/supercilium ambiguously, so not clean."
+black streaks on the sides,False,,,"Sides is a vague body region, not one supported part."
+two red eyes,True,eye,left eye|right eye,Directly describes the eyes.
+white plumage,False,,,"Plumage is whole-bird coloration, not one supported part."
+a grayish-white body,False,,,Body is unsupported and too broad.
+a black bill with a yellow tip,True,beak,beak,Bill maps cleanly to beak.
+"a long, thin neck",False,,,Neck is not a supported coarse part group.
+red eyes,True,eye,left eye|right eye,Directly describes the eyes.
+a gray breast,True,breast,breast,Directly describes the breast.
+yellowish stripes on the wings,True,wing,left wing|right wing,Primarily describes the wings.
+grayish-white underparts,False,,,Underparts is a vague multi-part region.
+"a thin, black bill",True,beak,beak,Bill maps cleanly to beak.
+"a long, pointed wings",True,wing,left wing|right wing,Directly describes the wings.
+a black crescent on the breast,True,breast,breast,Primarily describes the breast.
+a reddish-brown body,False,,,"Describes the whole body, not one supported part."
+yellow wings with black bars,True,wing,left wing|right wing,Primarily describes the wings.
+"a long, pointed beak",True,beak,beak,Directly describes the beak.
+"a large, orange bill",True,beak,beak,Bill maps cleanly to beak.
+"a small, blackbird-like bird",False,,,"Describes overall bird type/size, not a supported part."
+"a long, pointed tail",True,tail,tail,Directly describes the tail.
+brownish wings with white bars,True,wing,left wing|right wing,Primarily describes the wings.
+a purple-red head and breast,False,,,Refers to multiple parts and includes unsupported head.
+a black band across its eyes,True,eye,left eye|right eye,Centered on the eye region.
+a red cap on the head,True,crown,crown,Cap maps to crown.
+a yellow eyebrow,False,,,Eyebrow is not a supported part annotation.
+"a small, forked tail",True,tail,tail,Directly describes the tail.
+a black cap and bib,False,,,Refers to multiple parts: crown and throat/breast region.
+A black body,False,,,Body is too broad and unsupported.
+a raucous voice,False,,,"Behavioral/acoustic trait, not a part."
+a brownish-gray color,False,,,Global color trait without a specific part.
+a yellow crown,True,crown,crown,Directly describes the crown.
+a black and white body,False,,,Body is too broad and unsupported.
+a small bird,False,,,"Overall size, not a part."
+"a small, greenish-gray bird",False,,,"Overall bird description, not a supported part."
+orange feet,False,,,Feet are not a supported part group.
+"a small, plump bird",False,,,"Overall body shape/size, not a part."
+"a black head, back, and tail",False,,,Refers to multiple parts and unsupported head.
+a whitish throat,True,throat,throat,Directly describes the throat.
+a bright green back,True,back,back,Directly describes the back.
+"a long, brown tail",True,tail,tail,Directly describes the tail.
+a white stripe on the tail,True,tail,tail,Directly localizable to the tail.
+a black collar,False,,,"Collar is an ambiguous neck region, not a supported part."
+white belly,True,belly,belly,Directly describes the belly.
+a loud cawing sound,False,,,"Behavioral/acoustic trait, not a part."
+yellow wings,True,wing,left wing|right wing,Directly describes the wings.
+a grey back,True,back,back,Directly describes the back.
+yellow beak,True,beak,beak,Directly describes the beak.
+"long, narrow wings",True,wing,left wing|right wing,Directly describes the wings.
+a medium-sized duck,False,,,"Overall animal type/size, not a part."
+"a small, blue-green body",False,,,Body is too broad and unsupported.
+"a small, rounded body",False,,,"Body shape, not a supported part."
+white belly and undertail,False,,,"Refers to multiple regions, one unsupported as stated."
+a medium-sized bird,False,,,"Overall size, not a part."
+orange or yellow eyes,True,eye,left eye|right eye,Directly describes the eyes.
+a black bill,True,beak,beak,Bill maps cleanly to beak.
+large wingspan,False,,,"Global size measurement, not a localized part annotation."
+a white belly,True,belly,belly,Directly describes the belly.
+a black or dark gray color,False,,,Global color trait without a specific part.
+grayish upperparts,False,,,Upperparts is a vague multi-part region.
+"a long, slender body",False,,,"Body shape, not a supported part."
+a black and white barred tail,True,tail,tail,Directly describes the tail.
+a yellow body with black wings,False,,,Refers to multiple parts and includes unsupported body.
+a black hood and back,False,,,Refers to multiple parts and hood is unsupported.
+a stocky body,False,,,"Body shape, not a supported part."
+"a long, pointed bill",True,beak,beak,Bill maps cleanly to beak.
+All-dark plumage,False,,,"Describes overall plumage, not one supported part."
+brown upperparts,False,,,Upperparts is a vague multi-part region.
+"a small, slender body",False,,,Body is not a supported single part.
+"long, brown wings",True,wing,left wing|right wing,Directly describes the wings.
+large eyes,True,eye,left eye|right eye,Directly describes the eyes.
+a thick bill,True,beak,beak,Bill maps cleanly to beak.
+yellowish sides and flanks,False,,,Sides and flanks do not map cleanly to one supported part.
+greenish upperparts,False,,,Upperparts is a vague multi-part region.
+a thin beak,True,beak,beak,Directly describes the beak.
+a black and white coloring,False,,,"Global color pattern, not one localized part."
+a long bill,True,beak,beak,Bill maps cleanly to beak.
+"a small, dark body",False,,,Body is not a supported single part.
+a wingspan of about 3 feet,False,,,"Overall size measurement, not a localized part annotation."
+black legs,True,leg,left leg|right leg,Directly describes the legs.
+a seabird,False,,,"Taxonomic/ecological description, not a part."
+a pale grayish-white underbody,False,,,"Underbody is a vague region, not one supported part."
+"a large, red breast",True,breast,breast,Directly describes the breast.
+black wingtips,False,,,Wingtips are too specific relative to whole wing annotation.
+"a long, hooked bill",True,beak,beak,Bill maps cleanly to beak.
+a stout body,False,,,Body is not a supported single part.
+a small tail,True,tail,tail,Directly describes the tail.
+large black bird,False,,,"Whole-bird description, not one supported part."
+"a slender, white body",False,,,Body is not a supported single part.
+a bright orange breast,True,breast,breast,Directly describes the breast.
+pale blue-gray upperparts,False,,,Upperparts is a vague multi-part region.
+a gray back,True,back,back,Directly describes the back.
+a white throat,True,throat,throat,Directly describes the throat.
+a black crest on the head,False,,,Crest/head does not map cleanly to a supported part.
+a greenish back,True,back,back,Directly describes the back.
+white stripes on the wings,True,wing,left wing|right wing,Describes markings on the wings.
+"a long, black bill",True,beak,beak,Bill maps cleanly to beak.
+a black breast,True,breast,breast,Directly describes the breast.
+"long, black wingtips",False,,,Wingtips are too specific relative to whole wing annotation.
+"a long, curved bill",True,beak,beak,Bill maps cleanly to beak.
+"a stout, conical bill",True,beak,beak,Bill maps cleanly to beak.
+a green tail with a white edge,True,tail,tail,Primarily describes the tail.
+"a small, conical beak",True,beak,beak,Directly describes the beak.
+red feathers,False,,,Feathers are not a single supported localized part.
+a slimmer body than most crows,False,,,Body/overall build is not a supported part.
+a red spot on the beak,True,beak,beak,Localized on the beak.
+a pointed bill,True,beak,beak,Bill maps cleanly to beak.
+a red cap on the male,False,,,Cap does not map cleanly to crown/forehead annotation.
+dark blue-black upperparts,False,,,Upperparts is a vague multi-part region.
+a long body,False,,,Body is not a supported single part.
+a gray body,False,,,Body is not a supported single part.
+a black patch on the breast,True,breast,breast,Localized on the breast.
+a small to medium-sized bird,False,,,"Overall size of the bird, not a part."
+"short, yellow legs",True,leg,left leg|right leg,Directly describes the legs.
+a tail with white bars,True,tail,tail,Localized pattern on the tail.
+dark gray or black upperparts,False,,,"""Upperparts"" is a vague multi-part region, not one supported part."
+black and orange plumage,False,,,"Describes overall plumage coloration, not a single supported part."
+white sides,False,,,"""Sides"" is not a supported coarse part group."
+a brown cap,True,crown,crown,"""Cap"" maps cleanly to the crown."
+a white underbelly,True,belly,belly,Underbelly maps to the belly.
+brown wings,True,wing,left wing|right wing,Directly describes the wings.
+a yellow or orange beak,True,beak,beak,Direct match to beak.
+streaks of white on its wings,True,wing,left wing|right wing,Describes coloration on the wings.
+gray feathers,False,,,Too general; feathers are not one supported part.
+"silky, brown feathers",False,,,"Too general and partly texture-based, not one supported part."
+"a long, curved tail",True,tail,tail,Directly describes the tail.
+"a small, white bird",False,,,"Describes whole bird size/color, not one part."
+a black mask through the eye,False,,,"Mask is a face pattern spanning unsupported regions, not just the eye."
+"a short, conical beak",True,beak,beak,Directly describes the beak.
+a yellowish eyebrow,False,,,Eyebrow/supercilium is not a supported coarse part.
+"a small, grayish-brown bird",False,,,"Describes whole bird appearance, not one part."
+a red breast (males only),True,breast,breast,Direct match to breast.
+a violet ear patch,False,,,Ear patch is not a supported part group.
+"a long, straight beak",True,beak,beak,Directly describes the beak.
+a white ring around the neck,False,,,"Neck ring spans an unsupported neck region, not one supported part."
+White wingtips,False,,,Wingtips are too specific relative to the whole wing annotation.
+a yellow throat and breast,False,,,Mentions two supported parts at once.
+a black band across the breast,True,breast,breast,Localized to the breast.
+brownish-gray plumage,False,,,"Overall plumage coloration, not a single part."
+pale belly,True,belly,belly,Direct match to belly.
+"a small, sparrow-like bird",False,,,"Overall bird description, not a supported part."
+"a long, thin tail",True,tail,tail,Directly describes the tail.
+a white stripe over the eye,False,,,Stripe over the eye is not the eye itself and does not map cleanly to a supported part.
+"a long, pointy beak",True,beak,beak,Directly describes the beak.
+a black throat and upper chest,False,,,"Mentions throat plus upper chest/breast, so it spans multiple regions."
+long wingspan,True,wing,left wing|right wing,Primarily describes the wings.
+short tail,True,tail,tail,Directly describes the tail.
+a brown back and white belly,False,,,Mentions two supported parts at once.
+a black bib with white stripes,False,,,Bib is not a clean supported part mapping; it spans throat/upper breast ambiguously.
+long tail with white stripes,True,tail,tail,Primarily localized to the tail.
+iridescent green feathers,False,,,Too general; feathers are not one supported part.
+a black or dark gray plumage,False,,,"Overall plumage coloration, not a single part."
+a light stripe above the eye,False,,,Stripe above the eye is not the eye itself and does not map cleanly to a supported part.
+a yellowish bill,True,beak,beak,Bill maps to beak.
+a big head,False,,,Head is not a supported coarse part group.
+"a small, round head",False,,,Head is not a supported coarse part group.
+a black tail with white bars,True,tail,tail,Primarily describes the tail.
+black mask,False,,,"Mask is a facial region pattern, not one supported part."
+a trackpad or mouse,False,,,Not a bird part concept.
+red skin around the face,False,,,Face is an unsupported vague region.
+a black back,True,back,back,Direct match to back.
+a brown or grayish body,False,,,"Body is a vague whole-bird region, not one supported part."
+all black coloration,False,,,"Global coloration, not localized to one part."
+a dark blue or black back,True,back,back,Direct match to back.
+a black back and tail,False,,,Mentions two supported parts at once.
+a black band on the tail,True,tail,tail,Directly describes the tail.
+a rust-colored cap and nape,False,,,"Refers to two supported parts, not one single part group."
+"a large, brown bird",False,,,"Describes the whole bird, not a single supported part."
+a dark line through the eye,True,eye,left eye|right eye,Primarily localized to the eye region.
+black and white wings,True,wing,left wing|right wing,Directly describes the wings.
+a gray plumage,False,,,"Plumage is a whole-bird trait, not one supported part."
+short legs,True,leg,left leg|right leg,Directly describes the legs.
+two long wings,True,wing,left wing|right wing,Directly describes the wings.
+"a large, cone-shaped bill",True,beak,beak,Bill maps cleanly to beak.
+"black head, neck, and back",False,,,"Covers multiple regions, not one supported part."
+gray upperparts,False,,,Upperparts is a vague multi-part region.
+grey upperparts,False,,,Upperparts is a vague multi-part region.
+"a small, black bill",True,beak,beak,Bill maps cleanly to beak.
+yellowish underparts,False,,,Underparts is a vague multi-part region.
+"a long, curved neck",False,,,Neck is not a supported coarse part group.
+white breast,True,breast,breast,Directly describes the breast.
+webbed feet,False,,,Feet are not a supported part group.
+"a swift, acrobatic flight",False,,,"Behavioral trait, not a localizable part."
+a bright red breast,True,breast,breast,Directly describes the breast.
+iridescent feathers,False,,,Feathers is a broad non-part-specific trait.
+a black wings and tail,False,,,"Refers to two supported parts, not one single part group."
+"long, tapered wings",True,wing,left wing|right wing,Directly describes the wings.
+"a large, plump body",False,,,Body is a vague whole-bird region.
+a small to medium size,False,,,Overall size is not a part annotation.
+greenish-yellow back and wings,False,,,"Refers to two supported parts, not one single part group."
+a grayish-brown back,True,back,back,Directly describes the back.
+a white rump,False,,,Rump is not a supported coarse part group.
+a yellow head,False,,,Head does not map cleanly to one supported part.
+a red throat pouch,True,throat,throat,Primarily describes the throat region.
+A short tail,True,tail,tail,Directly describes the tail.
+a white underside,False,,,Underside is a vague multi-part region.
+a blue back,True,back,back,Directly describes the back.
+brownish plumage,False,,,"Plumage is a whole-bird trait, not one supported part."
+a yellow eye,True,eye,left eye|right eye,Directly describes the eye.
+a black and white striped body,False,,,Body is a vague whole-bird region.
+black feathers,False,,,Feathers is not a single supported part group.
+"a long, thick neck",False,,,Neck is not a supported coarse part group.
+rufous (red-brown) color,False,,,Color alone is not tied to one supported part.
+yellowish legs,True,leg,left leg|right leg,Directly describes the legs.
+relatively long wings and tail,False,,,"Refers to two supported parts, not one single part group."
+"a thin, curved bill",True,beak,beak,Bill maps cleanly to beak.
+hairy body,False,,,Body is a vague whole-bird region.
+a brownish-olive upper body,False,,,Upper body is a vague multi-part region.
+"a clear, melodious song",False,,,"Behavioral or acoustic trait, not a localizable part."
+a white patch on its wing,True,wing,left wing|right wing,Primarily localized to the wing.
+a black-and-white striped head,False,,,Head does not map cleanly to one supported part.
+a white head and neck,False,,,"Covers unsupported or multiple regions, not one supported part."
+a black wingtips,False,,,Wingtips are too specific relative to the whole wing annotation.
+a pointy crest on the head,False,,,Crest/head does not map cleanly to one supported part.
+"long, pointed wings",True,wing,left wing|right wing,Directly describes the wings.
+"a large, hooked bill",True,beak,beak,Bill maps cleanly to beak.
+white underwings,False,,,Underwings is too specific and not the whole wing part.
+a yellowish breast,True,breast,breast,Describes the breast directly.
+a brown and white color scheme,False,,,"Global coloration, not a single supported part."
+"long, black ear tufts",False,,,Ear tufts are not a supported CUB part.
+"a short, stubby beak",True,beak,beak,Describes the beak directly.
+all black body,False,,,Body is too broad and unsupported as one part.
+"a long, graceful neck",False,,,Neck is not a supported coarse part.
+a rusty brown color,False,,,"General color trait, not localized to one part."
+a small songbird,False,,,"Whole-bird type/size, not a part."
+white streaks on the wings,True,wing,left wing|right wing,Pattern localized to the wings.
+shaggy feathers,False,,,Feather texture is not tied to one supported part.
+a black line through each eye,True,eye,left eye|right eye,Primarily centered on the eye region.
+a short tail,True,tail,tail,Describes the tail directly.
+white breast with brown spots,True,breast,breast,Describes the breast directly.
+a white body with black wings,False,,,"Refers to multiple regions, not one supported part."
+a light gray or white chest,False,,,Chest does not map cleanly to one supported part.
+a white stripe over each eye,False,,,Over-eye stripe is not the eye part itself.
+a brownish-red breast,True,breast,breast,Describes the breast directly.
+"a large, stocky bird",False,,,"Whole-bird size/build, not a part."
+a black band across the chest,False,,,Chest does not map cleanly to one supported part.
+a black neck and head,False,,,Combines multiple unsupported/supported regions.
+"long, blue-gray wings",True,wing,left wing|right wing,Describes the wings directly.
+yellowish sides,False,,,Sides is a vague body region.
+a black mask across the face,False,,,Face is a vague multi-part region.
+a black ring around the eyes,True,eye,left eye|right eye,Primarily describes the eye region.
+grey or brown plumage,False,,,"Overall plumage color, not one part."
+a black head and neck,False,,,Combines multiple regions and neck is unsupported.
+"a small, drab-colored bird",False,,,"Whole-bird description, not a part."
+a rusty-red throat and breast,False,,,Refers to two supported parts at once.
+black wings with white spots,True,wing,left wing|right wing,Describes the wings directly.
+grey or black wings,True,wing,left wing|right wing,Describes the wings directly.
+gray head,False,,,Head is broader than any one supported part.
+large size,False,,,"Overall size, not a part."
+"a short, thick beak",True,beak,beak,Describes the beak directly.
+a reddish-brown back,True,back,back,Describes the back directly.
+a yellow throat,True,throat,throat,Describes the throat directly.
+"a long, flowing tail",True,tail,tail,Describes the tail directly.
+"a small, black bird",False,,,"Whole-bird description, not a part."
+a light-colored underside,False,,,Underside is a vague multi-part region.
+a large bird,False,,,"Whole-bird size, not a part."
+gray body with black spots,False,,,Body is too broad and unsupported as one part.
+"a small, round body",False,,,Body shape is not a supported part.
+a black hood,False,,,"Hood covers multiple head regions, not one part."
+blue-grey wings and back,False,,,Refers to two supported parts at once.
+black markings on the wings,True,wing,left wing|right wing,Describes the wings directly.
+"long, black wings",True,wing,left wing|right wing,Describes the wings directly.
+large body,False,,,Body is too broad and unsupported as one part.
+olive-gray upperparts,False,,,Upperparts is a vague multi-part region.
+a pinkish breast,True,breast,breast,Describes the breast directly.
+a yellow belly,True,belly,belly,"Directly describes the belly, which is a supported part."
+Shiny black plumage,False,,,"Describes overall plumage, not one supported part."
+a loud caw,False,,,"Behavior/vocalization, not a localizable body part."
+a violet patch near each ear,False,,,Ear region is not a supported part group.
+a white or light-colored belly,True,belly,belly,Directly refers to the belly.
+blue eyes,True,eye,left eye|right eye,"Directly refers to the eyes, mapped to eye."
+white underparts with streaks,False,,,Underparts is a vague multi-part region.
+a streaked breast,True,breast,breast,Directly describes the breast.
+dark wingtips,False,,,Too specific relative to the whole wing annotation.
+all-white plumage,False,,,"Describes overall plumage, not one supported part."
+blue upperparts,False,,,Upperparts is a vague multi-part region.
+a yellow cap on the head,True,crown,crown,Cap on the head aligns best with crown.
+a black bib with white border,True,throat,throat,Bib is best aligned with the throat area.
+brownish-grey upperparts,False,,,Upperparts is a vague multi-part region.
+white tail,True,tail,tail,Directly refers to the tail.
+forked tail,True,tail,tail,Tail is a supported part even though shape is mentioned.
+a brown streak down its back,True,back,back,Directly refers to the back.
+blue wings,True,wing,left wing|right wing,"Directly refers to the wings, mapped to wing."
+a black stripe through the eye,True,eye,left eye|right eye,Primarily localized to the eye region.
+"a short, hooked beak",True,beak,beak,Beak is a supported part.
+orange eyes,True,eye,left eye|right eye,"Directly refers to the eyes, mapped to eye."
+iridescent green plumage,False,,,"Describes overall plumage, not one supported part."
+"a loud, high-pitched song",False,,,"Behavior/vocalization, not a body part."
+"long, dark wings",True,wing,left wing|right wing,Directly refers to the wings.
+"a large, white body",False,,,Body is a vague whole-bird region.
+a black stripe on the head,False,,,Head is too broad and does not map cleanly to one part.
+a light brown or grayish color,False,,,Global color trait with no specific supported part.
+large webbed feet,False,,,Feet are not a supported part group.
+a grayish-brown crown,True,crown,crown,Directly refers to the crown.
+Glossy black wings,True,wing,left wing|right wing,Directly refers to the wings.
+a white collar around the neck,False,,,Neck/collar does not map cleanly to one supported part.
+a brown back and wings,False,,,Describes multiple supported parts at once.
+a pale orange or brown breast,True,breast,breast,Directly refers to the breast.
+a red breast,True,breast,breast,Directly refers to the breast.
+"black cap and white ""eyeline""",False,,,Describes multiple parts at once: crown and eye region.
+a white face,False,,,Face is a vague unsupported region.
+blue wings with black bars,True,wing,left wing|right wing,Primarily describes the wings.
+yellowish eyes,True,eye,left eye|right eye,"Directly refers to the eyes, mapped to eye."
+"long, powerful wings",True,wing,left wing|right wing,Directly refers to the wings.
+a brownish cap,True,crown,crown,Cap aligns best with crown.
+dark brown stripes on the back,True,back,back,Directly refers to the back.
+a long beak,True,beak,beak,Beak is a supported part.
+"a short, stubby bill",True,beak,beak,Bill maps directly to beak.
+brown streaks on the chest,True,breast,breast,Chest aligns best with breast.
+olive-green upperparts,False,,,Upperparts is a vague multi-part region.
+"a large, white bird",False,,,"Whole bird description, not one supported part."
+"a short, pointed tail",True,tail,tail,Directly refers to the tail.
+a ruby-red throat,True,throat,throat,Directly refers to the throat.
+"a short, stubby tail",True,tail,tail,Directly refers to the tail.
+Yellow eyes,True,eye,left eye|right eye,"Directly refers to the eyes, mapped to eye."
+black wings with white bars,True,wing,left wing|right wing,"Primarily describes the wings, a supported part group."
+a round body,False,,,"Describes overall body shape, not a supported localized part."
+a brown or reddish cap,True,crown,crown,Cap maps cleanly to the crown.
+a yellow bill with a red spot,True,beak,beak,"Bill maps to beak, and the description stays on that part."
+"a large, bulky body",False,,,"Describes overall body size/build, not a supported part."
+"a small, blue body",False,,,Body is too broad and unsupported as a coarse part.
+a bright yellow body,False,,,"Body is a vague whole-bird region, not a supported part."
+a high refractive index,False,,,Not a bird part or localizable visual part annotation.
+yellow tips on the wings,False,,,Wingtips are more specific than the supported whole wing annotation.
+orange legs and feet,False,,,"Mixes leg with unsupported feet, so it does not map cleanly."
+pointed wings,True,wing,left wing|right wing,Primarily describes the wings.
+a white breast and belly,False,,,Refers to two supported parts at once.
+"a long, curved beak",True,beak,beak,Cleanly describes the beak.
+"a long, thin body",False,,,Body is unsupported and too broad.
+"a small, brown body",False,,,Body is unsupported and not a single annotated part.
+"a long, black tail",True,tail,tail,Cleanly describes the tail.
+a black cap on its head,True,crown,crown,Cap maps to the crown.
+a yellow head and breast,False,,,"Combines head region with breast, not a single supported part."
+a rosy breast,True,breast,breast,Cleanly describes the breast.
+brown back and wings,False,,,Refers to two supported parts at once.
+"a large, bulbous beak",True,beak,beak,Cleanly describes the beak.
+a black and white head,False,,,Head is too broad and not a supported coarse part.
+a white stripe on the wings,True,wing,left wing|right wing,Primarily describes the wings.
+a white chin and throat,True,throat,throat,Chin aligns most closely with the throat region.
+a white line above the eye,False,,,Above-eye stripe is not the eye itself and lacks a supported matching part.
+a clear or translucent color,False,,,Not tied to any localized supported part.
+a black body,False,,,"Body is a vague whole-bird region, not a supported part."
+"a long, orange beak",True,beak,beak,Cleanly describes the beak.
+"a short, blunt beak",True,beak,beak,Cleanly describes the beak.
+"a long, narrow bill",True,beak,beak,Bill maps cleanly to beak.
+blue and white plumage,False,,,"Plumage is a whole-bird trait, not one supported part."
+a black and white striped back,True,back,back,Cleanly describes the back.
+a white eye ring,True,eye,left eye|right eye,An eye ring is localized around the eye and aligns to eye.
+gray and white plumage,False,,,"Plumage is global, not a single supported part."
+long legs,True,leg,left leg|right leg,Cleanly describes the legs.
+a dark brown or black color,False,,,Color alone is not tied to any supported part.
+red-brown color,False,,,Color alone is not tied to any supported part.
+all black plumage,False,,,"Whole-bird plumage pattern, not one supported part."
+"a short, notched tail",True,tail,tail,Cleanly describes the tail.
+white bars on the wings,True,wing,left wing|right wing,Primarily describes the wings.
+grey and white mottled plumage,False,,,"Plumage is a global trait, not one supported part."
+"a loud, musical song",False,,,"Behavioral/acoustic trait, not a localizable part."
+"a small, pointed bill",True,beak,beak,Bill maps cleanly to beak.
+a blue-gray body,False,,,Body is unsupported and too broad.
+a long neck,False,,,Neck is not among the supported part groups.
+"a black ""mask"" around the eyes",False,,,"Mask around the eyes spans a broader face region, not cleanly the eye part."
+a gray back with black streaks,True,back,back,Cleanly describes the back.
+a long tail with a white tip,True,tail,tail,Primarily describes the tail.
+yellow bar on wing,True,wing,left wing|right wing,Primarily describes the wing.
+a blue head,False,,,Head is too broad and not a supported coarse part.
+a black mask on the face,False,,,"Face mask spans multiple unsupported facial regions, not one annotated part."
+red shoulders,False,,,Shoulders are not a supported CUB part group.
+A conical bill,True,beak,beak,Bill maps cleanly to the beak part.
+"a swift, direct flight",False,,,"Behavioral trait, not a localizable body part."
+a greenish-yellow body,False,,,Body is too broad and not one supported part.
+"a long, stout beak",True,beak,beak,Directly describes the beak.
+a black ring around the neck,False,,,"Neck ring spans around the neck, not one supported part."
+red and yellow wingtips,False,,,Wingtips are too specific relative to the whole wing annotation.
+grayish-brown plumage,False,,,"Plumage is a whole-bird trait, not one part."
+a white throat and breast,False,,,Refers to two supported parts at once.
+a red face,False,,,"Face is a vague multi-part region, not one supported part."
+a black eye stripe,False,,,Stripe near the eye is not the eye part itself.
+blue plumage,False,,,"Global plumage color, not a single supported part."
+a rusty-red breast,True,breast,breast,Directly describes the breast.
+a black tail with a white tip,True,tail,tail,Primarily describes the tail.
+a black streak on the breast,True,breast,breast,Localized on the breast.
+"a large, gray body",False,,,"Body is too broad and includes size, not one part."
+a black stripe above the eye,False,,,"Above-eye stripe is adjacent to the eye, not the eye itself."
+olive upperparts,False,,,Upperparts is a vague multi-part region.
+a yellow beak,True,beak,beak,Directly describes the beak.
+white patches on the wings,True,wing,left wing|right wing,Localized on the wings.
+yellow legs and feet,False,,,Combines legs with unsupported feet.
+white spots on its wings,True,wing,left wing|right wing,Localized on the wings.
+white wing bars,True,wing,left wing|right wing,Wing bars are markings on the wing.
+beak is curved and pointed,True,beak,beak,Directly describes beak shape.
+"a loud, harsh cry",False,,,"Vocal behavior, not a body part."
+"a large, hawk-like body",False,,,"Overall body form, not one supported part."
+brown wings with white bars,True,wing,left wing|right wing,Primarily describes the wings.
+a black line through the eye,False,,,"Eye line is a surrounding marking, not the eye part itself."
+yellow or orange plumage,False,,,"Global plumage trait, not one supported part."
+a small to medium sized bird,False,,,"Overall size, not a localizable part."
+"a long, orange-red beak",True,beak,beak,Directly describes the beak.
+streaked upperparts,False,,,Upperparts is a vague multi-part region.
+gray wings,True,wing,left wing|right wing,Directly describes the wings.
+"a small, brown bill",True,beak,beak,Bill maps cleanly to the beak part.
+a black head with a white beak,False,,,"Mentions head plus beak, so not one supported part."
+"short, black legs",True,leg,left leg|right leg,Directly describes the legs.
+grayish wings and tail,False,,,Refers to two supported parts at once.
+black eyes,True,eye,left eye|right eye,Directly describes the eyes.
+"a long, thin beak",True,beak,beak,Directly describes the beak.
+"a small, delicate body",False,,,Body/overall build is not one supported part.
+green wings,True,wing,left wing|right wing,Directly describes the wings.
+yellow underparts,False,,,Underparts is a vague multi-part region.
+size,False,,,"Abstract overall size trait, not a part."
+a brown body,False,,,Body is too broad and not one supported part.
+a black throat,True,throat,throat,Directly describes the throat.
+a rusty cap,True,crown,crown,Cap maps best to the crown.
+long tail feathers,True,tail,tail,Tail feathers map to the tail part.
+a plump body,False,,,"Overall body shape, not one supported part."
+"a small, thin body",False,,,"Overall body build, not one supported part."
+a blue-gray back,True,back,back,"Directly describes the back, which is a supported part."
+a greenish-yellow back,True,back,back,"Directly describes the back, which is a supported part."
+brown wings with white stripes,True,wing,left wing|right wing,"Primarily describes the wings, which map to the coarse wing group."
+"a long, sharp beak",True,beak,beak,"Directly describes the beak, which is supported."
+"a dark, glossy bill",True,beak,beak,Bill maps cleanly to beak.
+a black or dark gray body,False,,,"Body is a whole-bird/vague region, not a supported single part."
+a black back and wings,False,,,Describes multiple supported parts at once.
+yellow feet,False,,,Feet are not a supported part group.
+gray or brown plumage,False,,,"Plumage is a global trait, not one supported part."
+"a long, black beak",True,beak,beak,"Directly describes the beak, which is supported."
+a yellow throat and chin,True,throat,throat,Primarily refers to the throat region; chin is not separate in the coarse set.
+a short beak,True,beak,beak,"Directly describes the beak, which is supported."
+"a small, compact body",False,,,Body/overall size does not align to one supported part.
+a black V on the back,True,back,back,"The marked region is the back, which is supported."
+olive-green back,True,back,back,"Directly describes the back, which is a supported part."
+"a long, tapered tail",True,tail,tail,"Directly describes the tail, which is supported."
+a streaked brown back,True,back,back,"Directly describes the back, which is a supported part."
+"a loud, melodious song",False,,,Behavior/vocalization is not a spatial part attribute.
+"short, brown legs",True,leg,left leg|right leg,"Directly describes the legs, which map to the coarse leg group."
+a blue body,False,,,"Body is a vague whole-bird region, not a supported single part."
+white stripes on the face,False,,,Face is a vague region and does not map cleanly to one supported part.
+a grey or brown body,False,,,"Body is a whole-bird/vague region, not a supported single part."
+a gray chest,True,breast,breast,Chest aligns cleanly with the breast part.

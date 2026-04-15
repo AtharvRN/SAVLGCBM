@@ -14,7 +14,7 @@ from tqdm import tqdm
 import model.utils as utils
 import data.utils as data_utils
 from model.cbm import Backbone, ConceptLayer, NormalizationLayer
-from data.utils import format_concept, get_classes
+from data.utils import canonicalize_concept_label, format_concept, get_classes
 from glm_saga.elasticnet import IndexedTensorDataset
 from data.utils import plot_annotations
 
@@ -240,7 +240,7 @@ class ConceptDataset(Dataset):
             if bbx["logit"] <= self.confidence_threshold:
                 continue
             normalized = dict(bbx)
-            normalized["label"] = format_concept(normalized["label"])
+            normalized["label"] = canonicalize_concept_label(normalized["label"])
             annotations.append(normalized)
         return annotations
 

@@ -19,14 +19,29 @@ from methods.common import build_run_dir, save_args, write_artifacts
 from model.cbm import Backbone, BackboneCLIP, train_dense_final, train_sparse_final
 
 
+def _dataset_targets_view(base_dataset: Dataset):
+    targets = getattr(base_dataset, "targets", None)
+    if targets is None:
+        return None
+    if isinstance(targets, torch.Tensor):
+        return targets.detach().cpu()
+    return torch.as_tensor(list(targets), dtype=torch.long)
+
+
+def _fast_subset_targets(base_dataset: Dataset, indices: Iterable[int]) -> torch.Tensor:
+    idx_list = list(indices)
+    targets = _dataset_targets_view(base_dataset)
+    if targets is not None:
+        return targets[idx_list].to(dtype=torch.long)
+    return torch.tensor([base_dataset[idx][1] for idx in idx_list], dtype=torch.long)
+
+
 class TransformedSubset(Dataset):
     def __init__(self, base_dataset: Dataset, indices: Iterable[int], transform):
         self.base_dataset = base_dataset
         self.indices = list(indices)
         self.transform = transform
-        self.targets = torch.tensor(
-            [base_dataset[idx][1] for idx in self.indices], dtype=torch.long
-        )
+        self.targets = _fast_subset_targets(base_dataset, self.indices)
 
     def __len__(self):
         return len(self.indices)
@@ -36,6 +51,18 @@ class TransformedSubset(Dataset):
         if self.transform is not None:
             image = self.transform(image)
         return image, target
+
+
+def use_original_label_free_protocol(args) -> bool:
+    return bool(getattr(args, "lf_original_protocol", False))
+
+
+def subset_targets(base_dataset: Dataset, indices: Iterable[int]) -> torch.Tensor:
+    return _fast_subset_targets(base_dataset, indices)
+
+
+def get_lf_concepts(args) -> list[str]:
+    return data_utils.get_concepts(args.concept_set, getattr(args, "filter_set", None))
 
 
 class DualTransformSubset(Dataset):
