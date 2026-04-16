@@ -68,11 +68,40 @@ def build_html(manifest_path: Path, output_path: Path, include_errors: bool, max
         score = record.get("score")
         score_text = "n/a" if score is None else f"{float(score):.3f}"
         det = record.get("num_detections", "n/a")
+        area_ratio = record.get("area_ratio")
+        area_text = "n/a" if area_ratio is None else f"{float(area_ratio):.4f}"
+        selection_mode = str(record.get("mask_selection", "n/a"))
+        selection_fallback_from = record.get("selection_fallback_from")
         preview_html = (
             f'<img src="{_rel_url(preview_path, output_dir)}" alt="preview">'
             if preview_path.exists()
             else '<div class="missing">missing preview</div>'
         )
+        candidate_items = []
+        for candidate in record.get("candidate_summaries", []):
+            candidate_preview_path = manifest_root / str(candidate.get("candidate_preview_path", ""))
+            candidate_selected = bool(candidate.get("selected"))
+            candidate_classes = "candidate selected" if candidate_selected else "candidate"
+            candidate_img = (
+                f'<img src="{_rel_url(candidate_preview_path, output_dir)}" alt="candidate">'
+                if candidate_preview_path.exists()
+                else '<div class="thumb-missing">missing</div>'
+            )
+            candidate_items.append(
+                "\n".join(
+                    [
+                        f'<a class="{candidate_classes}" href="{_rel_url(candidate_preview_path, output_dir)}">',
+                        candidate_img,
+                        '<div class="candidate-meta">',
+                        f'<span>r{int(candidate.get("candidate_rank", -1))} | src {int(candidate.get("source_index", -1))}</span>',
+                        f'<span>score {float(candidate.get("score", 0.0)):.3f} | area {float(candidate.get("area_ratio", 0.0)):.4f}</span>',
+                        f'<span>metric {float(candidate.get("selection_metric", 0.0)):.4f}</span>',
+                        '</div>',
+                        '</a>',
+                    ]
+                )
+            )
+        fallback_text = f" | fallback from: {selection_fallback_from}" if selection_fallback_from else ""
         cards.append(
             "\n".join(
                 [
@@ -81,10 +110,12 @@ def build_html(manifest_path: Path, output_path: Path, include_errors: bool, max
                     '<div class="meta">',
                     f'<strong>{html.escape(str(record.get("concept", "")))}</strong>',
                     f'<span>image {int(record.get("dataset_index", -1)):06d} | concept {int(record.get("concept_index", -1)):04d}</span>',
-                    f'<span>status: {html.escape(str(record.get("status", "")))} | score: {score_text} | detections: {html.escape(str(det))}</span>',
+                    f'<span>status: {html.escape(str(record.get("status", "")))} | score: {score_text} | area: {area_text} | detections: {html.escape(str(det))}</span>',
+                    f'<span>selection: {html.escape(selection_mode)}{html.escape(fallback_text)}</span>',
                     f'<span>mask: {html.escape(str(mask_path.relative_to(manifest_root))) if mask_path.exists() else "missing"}</span>',
                     f'<span class="path">{html.escape(image_path)}</span>',
                     '</div>',
+                    f'<div class="candidate-grid">{"".join(candidate_items) if candidate_items else ""}</div>',
                     '</article>',
                 ]
             )
@@ -117,6 +148,12 @@ def build_html(manifest_path: Path, output_path: Path, include_errors: bool, max
     .meta {{ display: grid; gap: 4px; padding: 10px; font-size: 13px; line-height: 1.35; }}
     .meta span {{ color: #52616f; }}
     .path {{ overflow-wrap: anywhere; font-size: 11px; }}
+    .candidate-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; padding: 0 10px 10px; }}
+    .candidate {{ display: grid; gap: 4px; color: inherit; text-decoration: none; }}
+    .candidate.selected {{ outline: 2px solid #0f766e; }}
+    .candidate img {{ aspect-ratio: 1 / 1; border: 1px solid #d7dce2; background: #0b1020; }}
+    .candidate-meta {{ display: grid; gap: 2px; font-size: 11px; color: #52616f; }}
+    .thumb-missing {{ display: grid; place-items: center; aspect-ratio: 1 / 1; font-size: 11px; color: #9b1c1c; background: #fee2e2; border: 1px solid #fecaca; }}
   </style>
 </head>
 <body>

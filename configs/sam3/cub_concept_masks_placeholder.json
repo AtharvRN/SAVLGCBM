@@ -16,17 +16,24 @@
     "checkpoint": "",
     "model_config": "",
     "device": "cuda",
-    "prompt_template": "{concept}",
-    "score_threshold": 0.0,
+    "prompt_template": "the visible bird region corresponding to {concept}",
+    "score_threshold": 0.4,
     "max_masks_per_concept": 1,
-    "mask_selection": "top_score"
+    "candidate_top_k": 4,
+    "mask_selection": "score_area_constrained",
+    "selection_score_power": 1.0,
+    "selection_area_power": 0.15,
+    "min_mask_area_ratio": 0.005,
+    "max_mask_area_ratio": 0.35,
+    "selection_fallback": "top_score"
   },
   "cache": {
     "schema_version": "sam3_concept_masks_v1",
     "mask_format": "npz_bool_hxw_v1",
     "mask_coordinates": "original_image_pixels",
     "write_metadata_json": true,
-    "write_preview_png": true
+    "write_preview_png": true,
+    "write_candidate_previews": true
   },
   "notes": [
     "This config uses the CUB concept set directly and does not apply concept-to-part mapping.",

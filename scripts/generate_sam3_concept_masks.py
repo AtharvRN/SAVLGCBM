@@ -13,7 +13,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image
@@ -29,6 +29,7 @@ from data.sam3_concept_mask_cache import (
     build_manifest,
     build_manifest_record,
     load_concept_set,
+    relative_candidate_preview_path,
     relative_record_paths,
     resolve_image_size,
     resolve_sample_path,
@@ -43,6 +44,20 @@ class Sam3ConceptMaskRunner:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.backend = str(config.get("backend", "medsam3_lora")).lower()
+        self.mask_selection = str(config.get("mask_selection", "top_score")).lower()
+        self.selection_score_power = float(config.get("selection_score_power", 1.0))
+        self.selection_area_power = float(config.get("selection_area_power", 0.15))
+        self.min_mask_area_ratio = (
+            None if config.get("min_mask_area_ratio") is None else float(config.get("min_mask_area_ratio"))
+        )
+        self.max_mask_area_ratio = (
+            None if config.get("max_mask_area_ratio") is None else float(config.get("max_mask_area_ratio"))
+        )
+        self.selection_fallback = str(config.get("selection_fallback", "top_score")).lower()
+        self.candidate_top_k = max(
+            1,
+            int(config.get("candidate_top_k", config.get("max_masks_per_concept", 1))),
+        )
         if self.backend in {"sam3", "medsam3", "medsam3_lora"}:
             self._init_medsam3_lora(config)
         else:
@@ -84,6 +99,78 @@ class Sam3ConceptMaskRunner:
         finally:
             os.chdir(cwd)
 
+    def _candidate_bbox(
+        self,
+        boxes_np: Optional[np.ndarray],
+        candidate_index: int,
+        mask: np.ndarray,
+    ) -> Optional[List[float]]:
+        if boxes_np is not None and candidate_index < len(boxes_np):
+            return [float(x) for x in boxes_np[candidate_index].tolist()]
+        ys, xs = np.where(mask)
+        if len(xs) == 0:
+            return None
+        return [float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1)]
+
+    def _selection_metric(self, score: float, area_ratio: float, mode: str) -> float:
+        in_area_band = True
+        if self.min_mask_area_ratio is not None and area_ratio < self.min_mask_area_ratio:
+            in_area_band = False
+        if self.max_mask_area_ratio is not None and area_ratio > self.max_mask_area_ratio:
+            in_area_band = False
+
+        if mode == "top_score":
+            return float(score)
+        if mode in {"score_area_constrained", "score_with_area_constraints"}:
+            if not in_area_band:
+                return float("-inf")
+            return float((max(score, 1e-8) ** self.selection_score_power) * (max(area_ratio, 1e-8) ** self.selection_area_power))
+        if mode in {"largest_valid", "largest_with_area_constraints"}:
+            if not in_area_band:
+                return float("-inf")
+            return float(area_ratio)
+        raise ValueError(f"Unsupported mask_selection mode: {mode}")
+
+    def _select_candidate(
+        self,
+        candidates: Sequence[Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], List[int], str, Optional[str]]:
+        ranked = []
+        for idx, candidate in enumerate(candidates):
+            metric = self._selection_metric(
+                score=float(candidate["score"]),
+                area_ratio=float(candidate["area_ratio"]),
+                mode=self.mask_selection,
+            )
+            candidate["selection_metric"] = metric
+            ranked.append((metric, float(candidate["score"]), -idx, idx))
+
+        ranked.sort(reverse=True)
+        if ranked and np.isfinite(ranked[0][0]):
+            chosen_mode = self.mask_selection
+            fallback = None
+            return candidates[ranked[0][3]], [item[3] for item in ranked], chosen_mode, fallback
+
+        if self.selection_fallback == "top_score":
+            fallback_ranked = []
+            for idx, candidate in enumerate(candidates):
+                metric = self._selection_metric(
+                    score=float(candidate["score"]),
+                    area_ratio=float(candidate["area_ratio"]),
+                    mode="top_score",
+                )
+                candidate["selection_metric"] = metric
+                fallback_ranked.append((metric, -idx, idx))
+            fallback_ranked.sort(reverse=True)
+            return (
+                candidates[fallback_ranked[0][2]],
+                [item[2] for item in fallback_ranked],
+                "top_score",
+                self.mask_selection,
+            )
+
+        raise RuntimeError("No valid candidate remained after mask selection and no supported fallback was configured.")
+
     def predict(self, image_path: str, concept: str) -> Dict[str, Any]:
         if self.backend in {"sam3", "medsam3", "medsam3_lora"}:
             results = self.inferencer.predict(image_path, [concept])
@@ -102,17 +189,58 @@ class Sam3ConceptMaskRunner:
             scores_np = np.asarray(scores, dtype=np.float32)
             masks_np = np.asarray(masks)
             boxes_np = None if boxes is None else np.asarray(boxes, dtype=np.float32)
-            best_idx = int(scores_np.argmax())
-            mask = masks_np[best_idx].astype(bool)
-            bbox = None
-            if boxes_np is not None and best_idx < len(boxes_np):
-                bbox = [float(x) for x in boxes_np[best_idx].tolist()]
+            candidates: List[Dict[str, Any]] = []
+            for candidate_index in range(len(scores_np)):
+                mask = masks_np[candidate_index].astype(bool)
+                area_ratio = float(mask.mean())
+                bbox = self._candidate_bbox(boxes_np, candidate_index, mask)
+                candidates.append(
+                    {
+                        "source_index": int(candidate_index),
+                        "score": float(scores_np[candidate_index]),
+                        "mask": mask,
+                        "bbox_xyxy": bbox,
+                        "area_ratio": area_ratio,
+                    }
+                )
+
+            selected, ranked_indices, applied_mode, fallback_from = self._select_candidate(candidates)
+            candidate_summaries = []
+            candidate_preview_payloads = []
+            selected_source_index = int(selected["source_index"])
+            for candidate_rank, candidate_list_index in enumerate(ranked_indices[: self.candidate_top_k]):
+                candidate = candidates[candidate_list_index]
+                summary = {
+                    "candidate_rank": int(candidate_rank),
+                    "source_index": int(candidate["source_index"]),
+                    "score": float(candidate["score"]),
+                    "area_ratio": float(candidate["area_ratio"]),
+                    "bbox_xyxy": candidate["bbox_xyxy"],
+                    "selection_metric": float(candidate["selection_metric"]),
+                    "selected": bool(int(candidate["source_index"]) == selected_source_index),
+                }
+                candidate_summaries.append(summary)
+                candidate_preview_payloads.append(
+                    {
+                        "candidate_rank": int(candidate_rank),
+                        "source_index": int(candidate["source_index"]),
+                        "mask": candidate["mask"],
+                    }
+                )
             return {
                 "status": "ok",
-                "mask": mask,
-                "score": float(scores_np[best_idx]),
-                "bbox_xyxy": bbox,
+                "mask": selected["mask"],
+                "score": float(selected["score"]),
+                "bbox_xyxy": selected["bbox_xyxy"],
                 "num_detections": int(len(scores_np)),
+                "area_ratio": float(selected["area_ratio"]),
+                "mask_selection": applied_mode,
+                "selection_fallback_from": fallback_from,
+                "selected_source_index": int(selected_source_index),
+                "selected_selection_metric": float(selected["selection_metric"]),
+                "candidate_count": int(len(candidates)),
+                "candidate_summaries": candidate_summaries,
+                "candidate_preview_payloads": candidate_preview_payloads,
             }
         raise AssertionError(f"Unhandled backend: {self.backend}")
 
@@ -184,6 +312,16 @@ def _record_metadata(record: Dict[str, Any], dry_run: bool, sam3_cfg: Dict[str, 
             "score": "float confidence or null",
             "bbox_xyxy": "optional [x1, y1, x2, y2] in pixel coordinates",
         },
+        "candidate_summary_schema": {
+            "candidate_rank": "rank after selection sorting, starting at 0",
+            "source_index": "candidate index from SAM3 output after thresholding+NMS",
+            "score": "SAM3 confidence score",
+            "area_ratio": "mask area divided by image area",
+            "bbox_xyxy": "candidate box in original image pixels",
+            "selection_metric": "scalar used to rank candidates",
+            "selected": "whether this candidate became the cached pseudo-mask",
+            "candidate_preview_path": "optional overlay preview path for audit",
+        },
     }
 
 
@@ -207,6 +345,37 @@ def _write_preview(image_path: str, mask: np.ndarray, output_path: Path, alpha: 
     image_np[mask] = ((1.0 - alpha) * image_np[mask].astype(np.float32) + alpha * color).astype(np.uint8)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(image_np).save(output_path)
+
+
+def _attach_candidate_preview_paths(
+    record: Dict[str, Any],
+    prediction: Dict[str, Any],
+    layout: Sam3CacheLayout,
+    split: str,
+    image_path: str,
+    preview_alpha: float,
+    write_candidate_previews: bool,
+) -> None:
+    candidate_summaries = list(prediction.get("candidate_summaries", []))
+    payloads = list(prediction.get("candidate_preview_payloads", []))
+    payload_by_rank = {int(item["candidate_rank"]): item for item in payloads}
+    for summary in candidate_summaries:
+        candidate_rank = int(summary["candidate_rank"])
+        rel_path = relative_candidate_preview_path(
+            dataset_index=int(record["dataset_index"]),
+            concept_index=int(record["concept_index"]),
+            candidate_rank=candidate_rank,
+        )
+        summary["candidate_preview_path"] = rel_path
+        payload = payload_by_rank.get(candidate_rank)
+        if write_candidate_previews and payload is not None:
+            _write_preview(
+                image_path,
+                payload["mask"],
+                layout.root / split / rel_path,
+                alpha=preview_alpha,
+            )
+    record["candidate_summaries"] = candidate_summaries
 
 
 def build_records(
@@ -315,10 +484,25 @@ def main() -> None:
                     record["score"] = prediction.get("score")
                     record["num_detections"] = prediction.get("num_detections")
                     record["bbox_xyxy"] = prediction.get("bbox_xyxy")
+                    record["area_ratio"] = prediction.get("area_ratio")
+                    record["mask_selection"] = prediction.get("mask_selection")
+                    record["selection_fallback_from"] = prediction.get("selection_fallback_from")
+                    record["selected_source_index"] = prediction.get("selected_source_index")
+                    record["selected_selection_metric"] = prediction.get("selected_selection_metric")
+                    record["candidate_count"] = prediction.get("candidate_count", prediction.get("num_detections"))
                     record["failure_reason"] = None if prediction["status"] == "ok" else prediction["status"]
                     if prediction["status"] == "ok":
                         mask_path = layout.root / split / str(record["mask_path"])
                         _write_mask_npz(mask_path, prediction)
+                        _attach_candidate_preview_paths(
+                            record=record,
+                            prediction=prediction,
+                            layout=layout,
+                            split=split,
+                            image_path=str(image_path),
+                            preview_alpha=float(cache_cfg.get("preview_alpha", 0.45)),
+                            write_candidate_previews=bool(cache_cfg.get("write_candidate_previews", True)),
+                        )
                         if bool(cache_cfg.get("write_preview_png", True)):
                             preview_path = layout.root / split / str(record["preview_path"])
                             _write_preview(

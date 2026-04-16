@@ -3,10 +3,10 @@
   "split": "train",
   "concept_set": "concept_files/cub_filtered.txt",
   "output_root": "saved_activations/sam3_concept_masks",
-  "cache_name": "cub_medsam3_concept_masks_v1",
+  "cache_name": "cub_medsam3_concept_masks_20img_audit_v1",
   "dry_run": true,
   "subset": {
-    "max_images": 2,
+    "max_images": 20,
     "max_concepts": 3,
     "image_indices": null,
     "concept_indices": null
@@ -19,15 +19,15 @@
     "device": "cuda",
     "resolution": 1008,
     "prompt_template": "the visible bird region corresponding to {concept}",
-    "score_threshold": 0.4,
+    "score_threshold": 0.5,
     "nms_iou_threshold": 0.5,
     "max_masks_per_concept": 1,
-    "candidate_top_k": 4,
+    "candidate_top_k": 5,
     "mask_selection": "score_area_constrained",
     "selection_score_power": 1.0,
-    "selection_area_power": 0.15,
+    "selection_area_power": 0.2,
     "min_mask_area_ratio": 0.005,
-    "max_mask_area_ratio": 0.35,
+    "max_mask_area_ratio": 0.3,
     "selection_fallback": "top_score",
     "continue_on_error": true
   },
@@ -41,8 +41,8 @@
     "preview_alpha": 0.45
   },
   "notes": [
-    "Pod-oriented config for /workspace/SAVLGCBM with /workspace/MedSAM3 installed.",
-    "Use --run to disable dry_run. Base facebook/sam3 access still requires Hugging Face authentication or a local base checkpoint.",
-    "MedSAM3 inference currently uses the default 1008 resolution; 512 triggers a SAM3 RoPE shape assertion."
+    "Small post-fix audit cache: 20 CUB train images x first 3 concepts.",
+    "Uses a higher score threshold, prompt templating, and area-constrained candidate selection.",
+    "Candidate previews are stored for audit so prompt collapse and selection mistakes are visible."
   ]
 }

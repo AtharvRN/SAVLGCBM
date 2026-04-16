@@ -18,11 +18,17 @@
     "lora_weights": "/workspace/MedSAM3_v1/best_lora_weights.pt",
     "device": "cuda",
     "resolution": 1008,
-    "prompt_template": "{concept}",
-    "score_threshold": 0.1,
+    "prompt_template": "the visible bird region corresponding to {concept}",
+    "score_threshold": 0.4,
     "nms_iou_threshold": 0.5,
     "max_masks_per_concept": 1,
-    "mask_selection": "top_score",
+    "candidate_top_k": 4,
+    "mask_selection": "score_area_constrained",
+    "selection_score_power": 1.0,
+    "selection_area_power": 0.15,
+    "min_mask_area_ratio": 0.005,
+    "max_mask_area_ratio": 0.35,
+    "selection_fallback": "top_score",
     "continue_on_error": true
   },
   "cache": {
@@ -31,6 +37,7 @@
     "mask_coordinates": "original_image_pixels",
     "write_metadata_json": true,
     "write_preview_png": true,
+    "write_candidate_previews": true,
     "preview_alpha": 0.45
   },
   "notes": [

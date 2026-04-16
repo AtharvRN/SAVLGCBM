@@ -55,11 +55,16 @@ class Sam3CacheLayout:
     def previews_dir(self) -> Path:
         return self.root / self.split / "previews"
 
+    @property
+    def candidate_previews_dir(self) -> Path:
+        return self.root / self.split / "candidate_previews"
+
     def ensure_dirs(self) -> None:
         self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
         self.masks_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
         self.previews_dir.mkdir(parents=True, exist_ok=True)
+        self.candidate_previews_dir.mkdir(parents=True, exist_ok=True)
 
 
 def concept_hash(concepts: Sequence[str]) -> str:
@@ -123,6 +128,11 @@ def relative_record_paths(dataset_index: int, concept_index: int) -> Dict[str, s
         "metadata_path": f"metadata/{stem}.json",
         "preview_path": f"previews/{stem}.png",
     }
+
+
+def relative_candidate_preview_path(dataset_index: int, concept_index: int, candidate_rank: int) -> str:
+    stem = _record_stem(dataset_index, concept_index)
+    return f"candidate_previews/{stem}/candidate_{int(candidate_rank):02d}.png"
 
 
 def build_manifest_record(
