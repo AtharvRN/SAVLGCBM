@@ -58,7 +58,11 @@ class Sam3ConceptMaskRunner:
             1,
             int(config.get("candidate_top_k", config.get("max_masks_per_concept", 1))),
         )
-        if self.backend in {"sam3", "medsam3", "medsam3_lora"}:
+        if self.backend == "sam3":
+            raise NotImplementedError(
+                "Base SAM3 inference is not wired in yet. Do not use MedSAM3/LoRA for the final cache."
+            )
+        if self.backend in {"medsam3", "medsam3_lora"}:
             self._init_medsam3_lora(config)
         else:
             raise ValueError(f"Unsupported SAM3 backend: {self.backend}")
@@ -172,7 +176,7 @@ class Sam3ConceptMaskRunner:
         raise RuntimeError("No valid candidate remained after mask selection and no supported fallback was configured.")
 
     def predict(self, image_path: str, concept: str) -> Dict[str, Any]:
-        if self.backend in {"sam3", "medsam3", "medsam3_lora"}:
+        if self.backend in {"medsam3", "medsam3_lora"}:
             results = self.inferencer.predict(image_path, [concept])
             result = results.get(0, {})
             scores = result.get("scores")
@@ -242,7 +246,7 @@ class Sam3ConceptMaskRunner:
                 "candidate_summaries": candidate_summaries,
                 "candidate_preview_payloads": candidate_preview_payloads,
             }
-        raise AssertionError(f"Unhandled backend: {self.backend}")
+        raise AssertionError(f"Unhandled SAM3 backend: {self.backend}")
 
 
 def parse_args() -> argparse.Namespace:

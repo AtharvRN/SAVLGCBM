@@ -41,8 +41,8 @@
     "preview_alpha": 0.45
   },
   "notes": [
-    "Pod-oriented config for /workspace/SAVLGCBM with /workspace/MedSAM3 installed.",
-    "Use --run to disable dry_run. Base facebook/sam3 access still requires Hugging Face authentication or a local base checkpoint.",
+    "Deprecated MedSAM3 LoRA config kept only as a migration reference.",
+    "Do not use this for the final CUB pseudo-mask cache. The target is a base-SAM3 backend instead.",
     "MedSAM3 inference currently uses the default 1008 resolution; 512 triggers a SAM3 RoPE shape assertion."
   ]
 }

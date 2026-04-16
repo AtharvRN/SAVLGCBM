@@ -41,8 +41,8 @@
     "preview_alpha": 0.45
   },
   "notes": [
-    "Small post-fix audit cache: 20 CUB train images x first 3 concepts.",
-    "Uses a higher score threshold, prompt templating, and area-constrained candidate selection.",
+    "Deprecated MedSAM3 audit config kept only for comparison against the old path.",
+    "Do not use this for the final CUB pseudo-mask cache. The target is a base-SAM3 backend instead.",
     "Candidate previews are stored for audit so prompt collapse and selection mistakes are visible."
   ]
 }

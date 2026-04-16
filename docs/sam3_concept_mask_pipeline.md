@@ -123,6 +123,16 @@ python scripts/generate_sam3_concept_masks.py \
   --overwrite
 ```
 
+## Current Status
+
+The MedSAM3 LoRA configs in this branch are now treated as deprecated
+comparison artifacts only. The generator refuses to run the `medsam3`/
+`medsam3_lora` backend for the final cache path.
+
+The intended target is a base-SAM3 backend wired to a local or gated
+`facebook/sam3` checkpoint, but that loader is not implemented yet in this
+branch.
+
 ## MedSAM3 LoRA Backend
 
 `configs/sam3/cub_concept_masks_medsam3_pod.json` points at the current pod
@@ -147,11 +157,8 @@ python scripts/generate_sam3_concept_masks.py \
   --overwrite
 ```
 
-Prerequisite: MedSAM3 initializes the base model from the gated `facebook/sam3`
-Hugging Face repository. The pod needs Hugging Face authentication with access
-to that model, or the MedSAM3 loader needs a small patch to load the base SAM3
-checkpoint from a local path. Use the default `1008` resolution for this
-backend; `512` triggers a SAM3 RoPE shape assertion in the vision backbone.
+This backend is deprecated for the final cache. It remains documented here only
+to explain the old 100-image/20-image audit artifacts.
 
 ## SAVLG Training Hook
 

@@ -37,6 +37,7 @@
   },
   "notes": [
     "This config uses the CUB concept set directly and does not apply concept-to-part mapping.",
+    "This is the target placeholder for a future base-SAM3 loader, not the MedSAM3 LoRA path.",
     "Start with dry_run=true plus small max_images/max_concepts before enabling real SAM3 inference."
   ]
 }
