@@ -13,9 +13,9 @@
   },
   "sam3": {
     "backend": "sam3",
-    "repo_path": "/workspace/sam3",
-    "checkpoint_path": "/workspace/checkpoints/sam3.pt",
-    "bpe_path": "/workspace/sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz",
+    "repo_path": "/workspace/MedSAM3",
+    "load_from_hf": true,
+    "bpe_path": "/workspace/MedSAM3/sam3/assets/bpe_simple_vocab_16e6.txt.gz",
     "device": "cuda",
     "resolution": 1024,
     "prompt_template": "the visible bird region corresponding to {concept}",

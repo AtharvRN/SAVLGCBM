@@ -140,8 +140,8 @@ base-SAM3 layout:
 
 ```text
 /workspace/SAVLGCBM
-/workspace/sam3
-/workspace/checkpoints/sam3.pt
+/workspace/MedSAM3
+Hugging Face checkpoint download for facebook/sam3
 ```
 
 Run a tiny real-inference subset with:
@@ -157,7 +157,8 @@ python scripts/generate_sam3_concept_masks.py \
   --overwrite
 ```
 
-Use `SAM3_CHECKPOINT_PATH` to point at a different local checkpoint if needed.
+Use `SAM3_CHECKPOINT_PATH` to point at a different local checkpoint if needed;
+otherwise the backend loads the base checkpoint from Hugging Face.
 
 ## SAVLG Training Hook
 

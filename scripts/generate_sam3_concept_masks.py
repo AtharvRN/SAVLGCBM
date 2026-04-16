@@ -68,7 +68,7 @@ class Sam3ConceptMaskRunner:
             raise ValueError(f"Unsupported SAM3 backend: {self.backend}")
 
     def _init_base_sam3(self, config: Dict[str, Any]) -> None:
-        repo_path = Path(config.get("repo_path", "/workspace/sam3")).expanduser()
+        repo_path = Path(config.get("repo_path", "/workspace/MedSAM3")).expanduser()
         if str(repo_path) not in sys.path:
             sys.path.insert(0, str(repo_path))
 
@@ -77,11 +77,7 @@ class Sam3ConceptMaskRunner:
             or config.get("checkpoint")
             or os.environ.get("SAM3_CHECKPOINT_PATH", "")
         ).strip()
-        if not checkpoint_path:
-            raise ValueError(
-                "Base SAM3 requires checkpoint_path (or SAM3_CHECKPOINT_PATH). "
-                "Point this at the official SAM3 checkpoint."
-            )
+        load_from_hf = bool(config.get("load_from_hf", not checkpoint_path))
 
         device = str(config.get("device", "cuda"))
         resolution = int(config.get("resolution", 1024))
@@ -103,14 +99,14 @@ class Sam3ConceptMaskRunner:
         if "bpe_path" in sig.parameters:
             build_kwargs["bpe_path"] = bpe_path
         if "load_from_HF" in sig.parameters:
-            build_kwargs["load_from_HF"] = False
-        if "checkpoint_path" in sig.parameters:
+            build_kwargs["load_from_HF"] = load_from_hf
+        if checkpoint_path and "checkpoint_path" in sig.parameters:
             build_kwargs["checkpoint_path"] = checkpoint_path
-        elif "checkpoint" in sig.parameters:
+        elif checkpoint_path and "checkpoint" in sig.parameters:
             build_kwargs["checkpoint"] = checkpoint_path
-        elif "weights_path" in sig.parameters:
+        elif checkpoint_path and "weights_path" in sig.parameters:
             build_kwargs["weights_path"] = checkpoint_path
-        elif "model_path" in sig.parameters:
+        elif checkpoint_path and "model_path" in sig.parameters:
             build_kwargs["model_path"] = checkpoint_path
 
         self.base_model = build_sam3_image_model(**build_kwargs)
