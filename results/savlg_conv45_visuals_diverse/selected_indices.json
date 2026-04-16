@@ -1,0 +1,19 @@
+{
+  "description": "Reusable diverse SAVLG visualization examples selected from the CUB val/test split for conv4+conv5 checkpoint analysis.",
+  "checkpoint": "/workspace/SAVLGCBM/saved_models/savlg_cbm_cub_2026_04_09_20_39_53",
+  "output_dir": "/workspace/SAVLGCBM/results/savlg_conv45_visuals_diverse",
+  "dataset": "cub",
+  "split": "val",
+  "indices": [
+    386,
+    415,
+    486,
+    1092,
+    1448
+  ],
+  "notes": [
+    "Use these indices for future qualitative figures so examples stay consistent across runs.",
+    "Next step: render GT concept bbox overlays for the top contributing concepts on these same images.",
+    "Next step: compute box IoU / localization diagnostics for the selected top concepts on these same images."
+  ]
+}

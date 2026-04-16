@@ -1,0 +1,247 @@
+{
+  "subset_index": 75,
+  "dataset_index": 75,
+  "target_idx": 2,
+  "target_name": "Sooty Albatross",
+  "gt_concepts": [
+    "black beak",
+    "yellow eyes",
+    "long hooked bill",
+    "all dark plumage",
+    "large black bird",
+    "white wingtips",
+    "long wingspan",
+    "glossy black wings"
+  ],
+  "gt_ranks": [
+    {
+      "concept": "long hooked bill",
+      "rank": 17
+    },
+    {
+      "concept": "large black bird",
+      "rank": 26
+    },
+    {
+      "concept": "glossy black wings",
+      "rank": 28
+    },
+    {
+      "concept": "long wingspan",
+      "rank": 36
+    },
+    {
+      "concept": "black beak",
+      "rank": 40
+    },
+    {
+      "concept": "white wingtips",
+      "rank": 41
+    },
+    {
+      "concept": "all dark plumage",
+      "rank": 43
+    },
+    {
+      "concept": "yellow eyes",
+      "rank": 128
+    }
+  ],
+  "hit_at_focus_k": false,
+  "topk_predictions": [
+    {
+      "concept": "long brown tail",
+      "score": 1.2700321674346924
+    },
+    {
+      "concept": "small brown bird",
+      "score": 0.9123883247375488
+    },
+    {
+      "concept": "white throat",
+      "score": 0.52945876121521
+    },
+    {
+      "concept": "streaked upperparts",
+      "score": 0.5067183971405029
+    },
+    {
+      "concept": "small brown bill",
+      "score": 0.49606016278266907
+    },
+    {
+      "concept": "grayish brown head",
+      "score": 0.4248161315917969
+    },
+    {
+      "concept": "long curved beak",
+      "score": 0.40264302492141724
+    },
+    {
+      "concept": "gray head",
+      "score": 0.31763505935668945
+    },
+    {
+      "concept": "white belly",
+      "score": 0.3122195303440094
+    },
+    {
+      "concept": "yellowish upperparts",
+      "score": 0.2905190885066986
+    },
+    {
+      "concept": "streaked breast",
+      "score": 0.28745195269584656
+    },
+    {
+      "concept": "brown cap",
+      "score": 0.22384721040725708
+    },
+    {
+      "concept": "long thin body",
+      "score": 0.13857023417949677
+    },
+    {
+      "concept": "streaked brown back",
+      "score": 0.11105303466320038
+    },
+    {
+      "concept": "gray breast",
+      "score": 0.08952175080776215
+    },
+    {
+      "concept": "small sparrow like bird",
+      "score": 0.07037408649921417
+    },
+    {
+      "concept": "long hooked bill",
+      "score": 0.004060217645019293
+    },
+    {
+      "concept": "two white bars on the wings",
+      "score": 0.002163076074793935
+    },
+    {
+      "concept": "yellow breast",
+      "score": -0.003997677471488714
+    },
+    {
+      "concept": "black tail with white bars",
+      "score": -0.010036969557404518
+    }
+  ],
+  "image_file": "images/case_09_idx_75.jpg",
+  "gt_overlay_file": "gt_overlays/case_09_idx_75_gt.png",
+  "annotations": [
+    {
+      "label": "large black bird",
+      "logit": 0.65,
+      "box": [
+        204.53651428222656,
+        102.86293029785156,
+        348.4859619140625,
+        226.00308227539062
+      ]
+    },
+    {
+      "label": "black beak",
+      "logit": 0.51,
+      "box": [
+        206.01931762695312,
+        131.23121643066406,
+        233.4176025390625,
+        157.1774444580078
+      ]
+    },
+    {
+      "label": "glossy black wings",
+      "logit": 0.4,
+      "box": [
+        227.347900390625,
+        161.51910400390625,
+        340.30218505859375,
+        216.5079345703125
+      ]
+    },
+    {
+      "label": "long wingspan",
+      "logit": 0.27,
+      "box": [
+        227.347900390625,
+        161.51910400390625,
+        340.30218505859375,
+        216.5079345703125
+      ]
+    },
+    {
+      "label": "yellow eyes",
+      "logit": 0.45,
+      "box": [
+        236.0388641357422,
+        121.12496948242188,
+        246.37889099121094,
+        130.8114776611328
+      ]
+    },
+    {
+      "label": "all dark plumage",
+      "logit": 0.6,
+      "box": [
+        206.1446533203125,
+        103.64664459228516,
+        277.8403625488281,
+        159.4938201904297
+      ]
+    },
+    {
+      "label": "white wingtips",
+      "logit": 0.25,
+      "box": [
+        232.4083709716797,
+        117.4209976196289,
+        250.14627075195312,
+        134.19927978515625
+      ]
+    },
+    {
+      "label": "yellow eyes",
+      "logit": 0.33,
+      "box": [
+        232.4083709716797,
+        117.4209976196289,
+        250.14627075195312,
+        134.19927978515625
+      ]
+    },
+    {
+      "label": "long hooked bill",
+      "logit": 0.34,
+      "box": [
+        201.4175567626953,
+        126.95878601074219,
+        238.400146484375,
+        163.1512908935547
+      ]
+    },
+    {
+      "label": "long hooked bill",
+      "logit": 0.34,
+      "box": [
+        207.29934692382812,
+        133.046875,
+        232.2354736328125,
+        155.59088134765625
+      ]
+    },
+    {
+      "label": "glossy black wings",
+      "logit": 0.31,
+      "box": [
+        231.28341674804688,
+        164.63267517089844,
+        319.7098693847656,
+        206.9721221923828
+      ]
+    }
+  ]
+}

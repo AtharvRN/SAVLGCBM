@@ -1,0 +1,2223 @@
+{
+  "metadata": {
+    "load_path": "/workspace/SAVLGCBM/saved_models/cub/savlg_cbm_cub_2026_04_07_23_45_15-1",
+    "model_name": "savlg_cbm",
+    "dataset": "cub",
+    "annotation_dir": "/workspace/SAVLGCBM/annotations",
+    "score_source": "final",
+    "num_images_requested": 500,
+    "topk": 20,
+    "focus_k": 10,
+    "selection": "missed_at_k",
+    "max_cases": 10
+  },
+  "num_candidate_cases": 500,
+  "num_exported_cases": 10,
+  "cases": [
+    {
+      "subset_index": 16,
+      "dataset_index": 16,
+      "target_idx": 0,
+      "target_name": "Black footed Albatross",
+      "gt_concepts": [
+        "white body",
+        "black feet",
+        "long wings",
+        "yellow beak",
+        "large wingspan"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "white body",
+          "rank": 33
+        },
+        {
+          "concept": "long wings",
+          "rank": 61
+        },
+        {
+          "concept": "yellow beak",
+          "rank": 80
+        },
+        {
+          "concept": "large wingspan",
+          "rank": 123
+        },
+        {
+          "concept": "black feet",
+          "rank": 272
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "black body",
+          "score": 2.0043365955352783
+        },
+        {
+          "concept": "long curved neck",
+          "score": 1.805132508277893
+        },
+        {
+          "concept": "all black plumage",
+          "score": 1.3072642087936401
+        },
+        {
+          "concept": "red skin around the face",
+          "score": 1.2053223848342896
+        },
+        {
+          "concept": "long thin body",
+          "score": 1.0841461420059204
+        },
+        {
+          "concept": "large hooked bill",
+          "score": 1.020208716392517
+        },
+        {
+          "concept": "webbed feet",
+          "score": 1.0147026777267456
+        },
+        {
+          "concept": "black or dark gray plumage",
+          "score": 1.0105750560760498
+        },
+        {
+          "concept": "gray or brown plumage",
+          "score": 1.0003515481948853
+        },
+        {
+          "concept": "long narrow wings",
+          "score": 0.9883976578712463
+        },
+        {
+          "concept": "long tapered wings",
+          "score": 0.9197717308998108
+        },
+        {
+          "concept": "long neck",
+          "score": 0.9032591581344604
+        },
+        {
+          "concept": "slimmer body than most crows",
+          "score": 0.8365956544876099
+        },
+        {
+          "concept": "raucous call",
+          "score": 0.8203309774398804
+        },
+        {
+          "concept": "black or dark grey plumage",
+          "score": 0.764384925365448
+        },
+        {
+          "concept": "long pointed wings",
+          "score": 0.7525122761726379
+        },
+        {
+          "concept": "red face",
+          "score": 0.7361772060394287
+        },
+        {
+          "concept": "black or dark gray body",
+          "score": 0.709907054901123
+        },
+        {
+          "concept": "black legs and feet",
+          "score": 0.6593363881111145
+        },
+        {
+          "concept": "long black legs",
+          "score": 0.623167097568512
+        }
+      ],
+      "image_file": "images/case_00_idx_16.jpg",
+      "gt_overlay_file": "gt_overlays/case_00_idx_16_gt.png",
+      "annotations": [
+        {
+          "label": "black footed albatross",
+          "logit": 0.39,
+          "box": [
+            38.3311767578125,
+            37.781494140625,
+            229.96176147460938,
+            491.3052978515625
+          ]
+        },
+        {
+          "label": "white body",
+          "logit": 0.29,
+          "box": [
+            38.3311767578125,
+            37.781494140625,
+            229.96176147460938,
+            491.3052978515625
+          ]
+        },
+        {
+          "label": "large wingspan",
+          "logit": 0.26,
+          "box": [
+            177.29029846191406,
+            184.6812286376953,
+            215.05247497558594,
+            248.6094512939453
+          ]
+        },
+        {
+          "label": "long wings",
+          "logit": 0.41,
+          "box": [
+            177.29029846191406,
+            184.6812286376953,
+            215.05247497558594,
+            248.6094512939453
+          ]
+        },
+        {
+          "label": "yellow beak",
+          "logit": 0.36,
+          "box": [
+            167.5049591064453,
+            67.66577911376953,
+            229.8421630859375,
+            133.43170166015625
+          ]
+        },
+        {
+          "label": "black feet",
+          "logit": 0.33,
+          "box": [
+            132.00685119628906,
+            450.1387023925781,
+            204.83131408691406,
+            493.4661865234375
+          ]
+        },
+        {
+          "label": "black feet",
+          "logit": 0.37,
+          "box": [
+            37.461524963378906,
+            436.15423583984375,
+            206.1817626953125,
+            493.77801513671875
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 24,
+      "dataset_index": 24,
+      "target_idx": 0,
+      "target_name": "Black footed Albatross",
+      "gt_concepts": [
+        "yellow bill",
+        "long wings",
+        "yellow beak",
+        "large wingspan"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "large wingspan",
+          "rank": 29
+        },
+        {
+          "concept": "yellow beak",
+          "rank": 40
+        },
+        {
+          "concept": "long wings",
+          "rank": 49
+        },
+        {
+          "concept": "yellow bill",
+          "rank": 63
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "long tapered wings",
+          "score": 3.1882972717285156
+        },
+        {
+          "concept": "white body",
+          "score": 2.7508788108825684
+        },
+        {
+          "concept": "long wingspan",
+          "score": 2.4353485107421875
+        },
+        {
+          "concept": "glossy black wings",
+          "score": 2.421196460723877
+        },
+        {
+          "concept": "long narrow wings",
+          "score": 2.2423675060272217
+        },
+        {
+          "concept": "large white bird",
+          "score": 2.2111122608184814
+        },
+        {
+          "concept": "long hooked beak",
+          "score": 2.081285238265991
+        },
+        {
+          "concept": "long pointed wings",
+          "score": 1.9874619245529175
+        },
+        {
+          "concept": "white coloration on the body",
+          "score": 1.8407453298568726
+        },
+        {
+          "concept": "long white legs",
+          "score": 1.8376342058181763
+        },
+        {
+          "concept": "white body with grey wings",
+          "score": 1.8199865818023682
+        },
+        {
+          "concept": "wingspan of up to 3 5 feet",
+          "score": 1.8043254613876343
+        },
+        {
+          "concept": "gray or brown plumage",
+          "score": 1.7934168577194214
+        },
+        {
+          "concept": "long black legs",
+          "score": 1.7646898031234741
+        },
+        {
+          "concept": "large black bird",
+          "score": 1.7218915224075317
+        },
+        {
+          "concept": "black markings on the wings",
+          "score": 1.7037622928619385
+        },
+        {
+          "concept": "long forked tail",
+          "score": 1.6824487447738647
+        },
+        {
+          "concept": "white spots on the wings",
+          "score": 1.5659235715866089
+        },
+        {
+          "concept": "long orange red beak",
+          "score": 1.507201910018921
+        },
+        {
+          "concept": "all dark plumage",
+          "score": 1.4905507564544678
+        }
+      ],
+      "image_file": "images/case_01_idx_24.jpg",
+      "gt_overlay_file": "gt_overlays/case_01_idx_24_gt.png",
+      "annotations": [
+        {
+          "label": "black footed albatross",
+          "logit": 0.47,
+          "box": [
+            110.55480194091797,
+            261.2337341308594,
+            237.84405517578125,
+            383.8966979980469
+          ]
+        },
+        {
+          "label": "large wingspan",
+          "logit": 0.28,
+          "box": [
+            168.29168701171875,
+            262.70086669921875,
+            237.14617919921875,
+            308.9784240722656
+          ]
+        },
+        {
+          "label": "long wings",
+          "logit": 0.36,
+          "box": [
+            168.29168701171875,
+            262.70086669921875,
+            237.14617919921875,
+            308.9784240722656
+          ]
+        },
+        {
+          "label": "yellow beak",
+          "logit": 0.35,
+          "box": [
+            143.39212036132812,
+            302.07391357421875,
+            153.740478515625,
+            311.67315673828125
+          ]
+        },
+        {
+          "label": "yellow bill",
+          "logit": 0.27,
+          "box": [
+            143.39212036132812,
+            302.07391357421875,
+            153.740478515625,
+            311.67315673828125
+          ]
+        },
+        {
+          "label": "large wingspan",
+          "logit": 0.26,
+          "box": [
+            113.03795623779297,
+            313.28472900390625,
+            166.70394897460938,
+            381.940185546875
+          ]
+        },
+        {
+          "label": "long wings",
+          "logit": 0.34,
+          "box": [
+            113.03795623779297,
+            313.28472900390625,
+            166.70394897460938,
+            381.940185546875
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 28,
+      "dataset_index": 28,
+      "target_idx": 0,
+      "target_name": "Black footed Albatross",
+      "gt_concepts": [
+        "long wings",
+        "yellow beak",
+        "large wingspan"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "large wingspan",
+          "rank": 15
+        },
+        {
+          "concept": "long wings",
+          "rank": 29
+        },
+        {
+          "concept": "yellow beak",
+          "rank": 73
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "glossy black wings",
+          "score": 5.605187892913818
+        },
+        {
+          "concept": "long wingspan",
+          "score": 5.530760288238525
+        },
+        {
+          "concept": "large black bird",
+          "score": 5.509436130523682
+        },
+        {
+          "concept": "all dark plumage",
+          "score": 4.758116722106934
+        },
+        {
+          "concept": "white wingtips",
+          "score": 4.464908599853516
+        },
+        {
+          "concept": "long slim body",
+          "score": 3.8978328704833984
+        },
+        {
+          "concept": "long hooked bill",
+          "score": 3.209604263305664
+        },
+        {
+          "concept": "long narrow wings",
+          "score": 2.869688034057617
+        },
+        {
+          "concept": "black beak",
+          "score": 2.583852767944336
+        },
+        {
+          "concept": "large seabird",
+          "score": 2.3228867053985596
+        },
+        {
+          "concept": "long body",
+          "score": 2.017360210418701
+        },
+        {
+          "concept": "long tapered wings",
+          "score": 1.9508259296417236
+        },
+        {
+          "concept": "long pointed wings",
+          "score": 1.793673038482666
+        },
+        {
+          "concept": "grayish white underparts",
+          "score": 1.5494900941848755
+        },
+        {
+          "concept": "large wingspan",
+          "score": 1.4797719717025757
+        },
+        {
+          "concept": "forked tail",
+          "score": 1.4161721467971802
+        },
+        {
+          "concept": "gray head",
+          "score": 1.3695857524871826
+        },
+        {
+          "concept": "violet ear patch",
+          "score": 1.1518341302871704
+        },
+        {
+          "concept": "long hooked beak",
+          "score": 1.139719843864441
+        },
+        {
+          "concept": "violet patch near each ear",
+          "score": 1.1322466135025024
+        }
+      ],
+      "image_file": "images/case_02_idx_28.jpg",
+      "gt_overlay_file": "gt_overlays/case_02_idx_28_gt.png",
+      "annotations": [
+        {
+          "label": "large wingspan",
+          "logit": 0.31,
+          "box": [
+            192.62261962890625,
+            46.47203826904297,
+            253.88790893554688,
+            192.267822265625
+          ]
+        },
+        {
+          "label": "long wings",
+          "logit": 0.41,
+          "box": [
+            192.62261962890625,
+            46.47203826904297,
+            253.88790893554688,
+            192.267822265625
+          ]
+        },
+        {
+          "label": "black footed albatross",
+          "logit": 0.35,
+          "box": [
+            156.5635223388672,
+            46.10784912109375,
+            254.4773712158203,
+            369.43695068359375
+          ]
+        },
+        {
+          "label": "yellow beak",
+          "logit": 0.32,
+          "box": [
+            158.10501098632812,
+            199.7179718017578,
+            173.317626953125,
+            213.81968688964844
+          ]
+        },
+        {
+          "label": "long wings",
+          "logit": 0.37,
+          "box": [
+            167.5185546875,
+            216.2338104248047,
+            213.6999969482422,
+            368.45123291015625
+          ]
+        },
+        {
+          "label": "black footed albatross",
+          "logit": 0.32,
+          "box": [
+            139.12977600097656,
+            39.35298156738281,
+            276.4940185546875,
+            373.46002197265625
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 30,
+      "dataset_index": 30,
+      "target_idx": 1,
+      "target_name": "Laysan Albatross",
+      "gt_concepts": [
+        "wingspan of up to 3 5 feet",
+        "long black legs",
+        "long hooked beak",
+        "long yellow bill",
+        "long white legs",
+        "black wingtips",
+        "large white bird"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "long hooked beak",
+          "rank": 23
+        },
+        {
+          "concept": "black wingtips",
+          "rank": 32
+        },
+        {
+          "concept": "large white bird",
+          "rank": 33
+        },
+        {
+          "concept": "wingspan of up to 3 5 feet",
+          "rank": 47
+        },
+        {
+          "concept": "long yellow bill",
+          "rank": 49
+        },
+        {
+          "concept": "long white legs",
+          "rank": 51
+        },
+        {
+          "concept": "long black legs",
+          "rank": 134
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "gray wings",
+          "score": 1.717490315437317
+        },
+        {
+          "concept": "yellow beak",
+          "score": 1.5275551080703735
+        },
+        {
+          "concept": "long forked tail",
+          "score": 1.4934381246566772
+        },
+        {
+          "concept": "white body",
+          "score": 1.288516640663147
+        },
+        {
+          "concept": "grey or black wings",
+          "score": 1.2707008123397827
+        },
+        {
+          "concept": "grey upperparts",
+          "score": 1.266430377960205
+        },
+        {
+          "concept": "pale gray upperparts",
+          "score": 1.2602827548980713
+        },
+        {
+          "concept": "white underside",
+          "score": 1.145461916923523
+        },
+        {
+          "concept": "black ring around the neck",
+          "score": 1.13937509059906
+        },
+        {
+          "concept": "orange legs",
+          "score": 1.0302278995513916
+        },
+        {
+          "concept": "white ring around the neck",
+          "score": 1.0240110158920288
+        },
+        {
+          "concept": "black mask",
+          "score": 1.0238841772079468
+        },
+        {
+          "concept": "white coloration on the body",
+          "score": 1.00698983669281
+        },
+        {
+          "concept": "gray or brown plumage",
+          "score": 0.9952952265739441
+        },
+        {
+          "concept": "white body with grey wings",
+          "score": 0.9834526181221008
+        },
+        {
+          "concept": "white spots on the wings",
+          "score": 0.9792889952659607
+        },
+        {
+          "concept": "white underparts",
+          "score": 0.9775781035423279
+        },
+        {
+          "concept": "loud harsh cry",
+          "score": 0.9622283577919006
+        },
+        {
+          "concept": "pale pink legs and feet",
+          "score": 0.9284656643867493
+        },
+        {
+          "concept": "black markings on the wings",
+          "score": 0.9104772210121155
+        }
+      ],
+      "image_file": "images/case_03_idx_30.jpg",
+      "gt_overlay_file": "gt_overlays/case_03_idx_30_gt.png",
+      "annotations": [
+        {
+          "label": "large white bird",
+          "logit": 0.52,
+          "box": [
+            88.76319885253906,
+            174.71197509765625,
+            199.51885986328125,
+            320.299072265625
+          ]
+        },
+        {
+          "label": "long hooked beak",
+          "logit": 0.67,
+          "box": [
+            180.2632293701172,
+            238.50096130371094,
+            194.35047912597656,
+            252.5166778564453
+          ]
+        },
+        {
+          "label": "black wingtips",
+          "logit": 0.35,
+          "box": [
+            176.41213989257812,
+            175.4202423095703,
+            196.90023803710938,
+            198.0111846923828
+          ]
+        },
+        {
+          "label": "black wingtips",
+          "logit": 0.35,
+          "box": [
+            176.41213989257812,
+            175.4202423095703,
+            196.90023803710938,
+            198.0111846923828
+          ]
+        },
+        {
+          "label": "long yellow bill",
+          "logit": 0.33,
+          "box": [
+            89.67803955078125,
+            221.11500549316406,
+            124.61490631103516,
+            234.99942016601562
+          ]
+        },
+        {
+          "label": "wingspan of up to 3 5 feet",
+          "logit": 0.36,
+          "box": [
+            139.75494384765625,
+            175.16610717773438,
+            198.03460693359375,
+            218.1834716796875
+          ]
+        },
+        {
+          "label": "long black legs",
+          "logit": 0.32,
+          "box": [
+            116.47889709472656,
+            238.761962890625,
+            159.8582000732422,
+            319.1376953125
+          ]
+        },
+        {
+          "label": "long white legs",
+          "logit": 0.28,
+          "box": [
+            116.47889709472656,
+            238.761962890625,
+            159.8582000732422,
+            319.1376953125
+          ]
+        },
+        {
+          "label": "long black legs",
+          "logit": 0.3,
+          "box": [
+            116.88059997558594,
+            239.12481689453125,
+            147.6422576904297,
+            318.68255615234375
+          ]
+        },
+        {
+          "label": "long yellow bill",
+          "logit": 0.33,
+          "box": [
+            88.65035247802734,
+            219.27325439453125,
+            135.63253784179688,
+            237.12254333496094
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 31,
+      "dataset_index": 31,
+      "target_idx": 1,
+      "target_name": "Laysan Albatross",
+      "gt_concepts": [
+        "wingspan of up to 3 5 feet",
+        "white body",
+        "long black legs",
+        "long hooked beak",
+        "long yellow bill",
+        "long white legs",
+        "black wingtips",
+        "webbed feet",
+        "large white bird"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "white body",
+          "rank": 11
+        },
+        {
+          "concept": "large white bird",
+          "rank": 18
+        },
+        {
+          "concept": "wingspan of up to 3 5 feet",
+          "rank": 21
+        },
+        {
+          "concept": "long hooked beak",
+          "rank": 24
+        },
+        {
+          "concept": "long white legs",
+          "rank": 26
+        },
+        {
+          "concept": "long yellow bill",
+          "rank": 29
+        },
+        {
+          "concept": "long black legs",
+          "rank": 36
+        },
+        {
+          "concept": "black wingtips",
+          "rank": 50
+        },
+        {
+          "concept": "webbed feet",
+          "rank": 90
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "long narrow wings",
+          "score": 4.456612586975098
+        },
+        {
+          "concept": "large wingspan",
+          "score": 4.346503257751465
+        },
+        {
+          "concept": "large seabird",
+          "score": 4.268611431121826
+        },
+        {
+          "concept": "long body",
+          "score": 3.9142439365386963
+        },
+        {
+          "concept": "long wings",
+          "score": 3.841261625289917
+        },
+        {
+          "concept": "dark wingtips",
+          "score": 3.3963663578033447
+        },
+        {
+          "concept": "black feet",
+          "score": 3.309328556060791
+        },
+        {
+          "concept": "large size",
+          "score": 2.9666969776153564
+        },
+        {
+          "concept": "long tapered wings",
+          "score": 2.957282781600952
+        },
+        {
+          "concept": "long pointed wings",
+          "score": 2.8288161754608154
+        },
+        {
+          "concept": "white body",
+          "score": 2.7222883701324463
+        },
+        {
+          "concept": "long wingspan",
+          "score": 2.6756319999694824
+        },
+        {
+          "concept": "glossy black wings",
+          "score": 2.6102397441864014
+        },
+        {
+          "concept": "long hooked bill",
+          "score": 2.359900712966919
+        },
+        {
+          "concept": "long pointed bill",
+          "score": 2.3206281661987305
+        },
+        {
+          "concept": "white underbelly",
+          "score": 2.2591845989227295
+        },
+        {
+          "concept": "yellow bill",
+          "score": 2.252429485321045
+        },
+        {
+          "concept": "large white bird",
+          "score": 2.2516608238220215
+        },
+        {
+          "concept": "large black bird",
+          "score": 2.1752877235412598
+        },
+        {
+          "concept": "red throat pouch",
+          "score": 2.1236624717712402
+        }
+      ],
+      "image_file": "images/case_04_idx_31.jpg",
+      "gt_overlay_file": "gt_overlays/case_04_idx_31_gt.png",
+      "annotations": [
+        {
+          "label": "large white bird",
+          "logit": 0.54,
+          "box": [
+            141.39678955078125,
+            37.658355712890625,
+            477.932373046875,
+            208.12225341796875
+          ]
+        },
+        {
+          "label": "long hooked beak",
+          "logit": 0.46,
+          "box": [
+            249.99908447265625,
+            177.9644775390625,
+            266.5968017578125,
+            194.9322509765625
+          ]
+        },
+        {
+          "label": "long yellow bill",
+          "logit": 0.28,
+          "box": [
+            249.99908447265625,
+            177.9644775390625,
+            266.5968017578125,
+            194.9322509765625
+          ]
+        },
+        {
+          "label": "white body",
+          "logit": 0.31,
+          "box": [
+            250.83497619628906,
+            165.5927734375,
+            317.5795593261719,
+            203.82554626464844
+          ]
+        },
+        {
+          "label": "long white legs",
+          "logit": 0.26,
+          "box": [
+            286.4184265136719,
+            189.56997680664062,
+            315.7431335449219,
+            204.4938507080078
+          ]
+        },
+        {
+          "label": "webbed feet",
+          "logit": 0.3,
+          "box": [
+            286.4184265136719,
+            189.56997680664062,
+            315.7431335449219,
+            204.4938507080078
+          ]
+        },
+        {
+          "label": "webbed feet",
+          "logit": 0.34,
+          "box": [
+            287.3895568847656,
+            194.49562072753906,
+            312.8679504394531,
+            203.56190490722656
+          ]
+        },
+        {
+          "label": "black wingtips",
+          "logit": 0.32,
+          "box": [
+            144.16758728027344,
+            39.791934967041016,
+            181.76158142089844,
+            74.66131591796875
+          ]
+        },
+        {
+          "label": "black wingtips",
+          "logit": 0.32,
+          "box": [
+            144.16758728027344,
+            39.791934967041016,
+            181.76158142089844,
+            74.66131591796875
+          ]
+        },
+        {
+          "label": "wingspan of up to 3 5 feet",
+          "logit": 0.42,
+          "box": [
+            143.20333862304688,
+            39.43679428100586,
+            279.69586181640625,
+            167.14698791503906
+          ]
+        },
+        {
+          "label": "wingspan of up to 3 5 feet",
+          "logit": 0.26,
+          "box": [
+            298.6004333496094,
+            110.49736022949219,
+            477.2439880371094,
+            175.7711944580078
+          ]
+        },
+        {
+          "label": "long black legs",
+          "logit": 0.31,
+          "box": [
+            298.6004333496094,
+            110.49736022949219,
+            477.2439880371094,
+            175.7711944580078
+          ]
+        },
+        {
+          "label": "long hooked beak",
+          "logit": 0.28,
+          "box": [
+            244.29478454589844,
+            172.68267822265625,
+            273.2176208496094,
+            199.5807647705078
+          ]
+        },
+        {
+          "label": "long yellow bill",
+          "logit": 0.31,
+          "box": [
+            244.29478454589844,
+            172.68267822265625,
+            273.2176208496094,
+            199.5807647705078
+          ]
+        },
+        {
+          "label": "white body",
+          "logit": 0.42,
+          "box": [
+            249.90049743652344,
+            160.6599884033203,
+            339.80780029296875,
+            204.9638671875
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 50,
+      "dataset_index": 50,
+      "target_idx": 1,
+      "target_name": "Laysan Albatross",
+      "gt_concepts": [
+        "wingspan of up to 3 5 feet",
+        "long hooked beak",
+        "long yellow bill",
+        "black wingtips",
+        "large white bird"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "black wingtips",
+          "rank": 25
+        },
+        {
+          "concept": "long hooked beak",
+          "rank": 35
+        },
+        {
+          "concept": "long yellow bill",
+          "rank": 119
+        },
+        {
+          "concept": "large white bird",
+          "rank": 159
+        },
+        {
+          "concept": "wingspan of up to 3 5 feet",
+          "rank": 183
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "grey upperparts",
+          "score": 3.4642879962921143
+        },
+        {
+          "concept": "gray wings",
+          "score": 3.3872289657592773
+        },
+        {
+          "concept": "long forked tail",
+          "score": 2.369048833847046
+        },
+        {
+          "concept": "white body",
+          "score": 2.254134178161621
+        },
+        {
+          "concept": "long hooked bill",
+          "score": 1.63646399974823
+        },
+        {
+          "concept": "pale pink legs and feet",
+          "score": 1.607352375984192
+        },
+        {
+          "concept": "orange legs and feet",
+          "score": 1.5965760946273804
+        },
+        {
+          "concept": "pale pink legs",
+          "score": 1.5478872060775757
+        },
+        {
+          "concept": "webbed feet",
+          "score": 1.5408703088760376
+        },
+        {
+          "concept": "slender body",
+          "score": 1.5236117839813232
+        },
+        {
+          "concept": "slender white body",
+          "score": 1.5209236145019531
+        },
+        {
+          "concept": "yellow feet",
+          "score": 1.3271769285202026
+        },
+        {
+          "concept": "long black wingtips",
+          "score": 1.2676489353179932
+        },
+        {
+          "concept": "black cap on the head",
+          "score": 1.227005124092102
+        },
+        {
+          "concept": "white underparts",
+          "score": 1.2064727544784546
+        },
+        {
+          "concept": "orange legs",
+          "score": 1.111412525177002
+        },
+        {
+          "concept": "white body with grey wings",
+          "score": 0.8757304549217224
+        },
+        {
+          "concept": "white coloration on the body",
+          "score": 0.7092702388763428
+        },
+        {
+          "concept": "yellow beak",
+          "score": 0.6991506814956665
+        },
+        {
+          "concept": "white body with gray wings",
+          "score": 0.6957650184631348
+        }
+      ],
+      "image_file": "images/case_05_idx_50.jpg",
+      "gt_overlay_file": "gt_overlays/case_05_idx_50_gt.png",
+      "annotations": [
+        {
+          "label": "large white bird",
+          "logit": 0.58,
+          "box": [
+            126.37257385253906,
+            68.56315612792969,
+            210.22714233398438,
+            246.1465606689453
+          ]
+        },
+        {
+          "label": "long hooked beak",
+          "logit": 0.41,
+          "box": [
+            193.33206176757812,
+            152.5538330078125,
+            208.89578247070312,
+            162.14559936523438
+          ]
+        },
+        {
+          "label": "long yellow bill",
+          "logit": 0.29,
+          "box": [
+            193.33206176757812,
+            152.5538330078125,
+            208.89578247070312,
+            162.14559936523438
+          ]
+        },
+        {
+          "label": "black wingtips",
+          "logit": 0.31,
+          "box": [
+            164.7635040283203,
+            70.14625549316406,
+            182.48106384277344,
+            108.86193084716797
+          ]
+        },
+        {
+          "label": "black wingtips",
+          "logit": 0.31,
+          "box": [
+            164.7635040283203,
+            70.14625549316406,
+            182.48106384277344,
+            108.86193084716797
+          ]
+        },
+        {
+          "label": "wingspan of up to 3 5 feet",
+          "logit": 0.33,
+          "box": [
+            155.36953735351562,
+            69.84855651855469,
+            186.99510192871094,
+            147.50314331054688
+          ]
+        },
+        {
+          "label": "long yellow bill",
+          "logit": 0.3,
+          "box": [
+            189.21539306640625,
+            148.97360229492188,
+            211.7928466796875,
+            165.9046173095703
+          ]
+        },
+        {
+          "label": "wingspan of up to 3 5 feet",
+          "logit": 0.42,
+          "box": [
+            155.4177703857422,
+            70.07952880859375,
+            190.89666748046875,
+            244.90567016601562
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 56,
+      "dataset_index": 56,
+      "target_idx": 1,
+      "target_name": "Laysan Albatross",
+      "gt_concepts": [
+        "wingspan of up to 3 5 feet",
+        "white body",
+        "long black legs",
+        "long hooked beak",
+        "long yellow bill",
+        "long white legs",
+        "large white bird"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "long black legs",
+          "rank": 28
+        },
+        {
+          "concept": "white body",
+          "rank": 57
+        },
+        {
+          "concept": "long hooked beak",
+          "rank": 147
+        },
+        {
+          "concept": "long yellow bill",
+          "rank": 176
+        },
+        {
+          "concept": "large white bird",
+          "rank": 246
+        },
+        {
+          "concept": "wingspan of up to 3 5 feet",
+          "rank": 277
+        },
+        {
+          "concept": "long white legs",
+          "rank": 317
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "small head",
+          "score": 1.1165851354599
+        },
+        {
+          "concept": "large eyes",
+          "score": 1.0732899904251099
+        },
+        {
+          "concept": "large hawk like body",
+          "score": 0.8189316987991333
+        },
+        {
+          "concept": "small beak",
+          "score": 0.7748964428901672
+        },
+        {
+          "concept": "gray or brown plumage",
+          "score": 0.7287819981575012
+        },
+        {
+          "concept": "tail with a distinct v shape",
+          "score": 0.6952583193778992
+        },
+        {
+          "concept": "long pointed wings",
+          "score": 0.6693896651268005
+        },
+        {
+          "concept": "long thin body",
+          "score": 0.66158527135849
+        },
+        {
+          "concept": "black tail",
+          "score": 0.5728818774223328
+        },
+        {
+          "concept": "short tail",
+          "score": 0.48775720596313477
+        },
+        {
+          "concept": "long slender body",
+          "score": 0.47787970304489136
+        },
+        {
+          "concept": "yellow eyes",
+          "score": 0.45182231068611145
+        },
+        {
+          "concept": "pointed wings",
+          "score": 0.3688146770000458
+        },
+        {
+          "concept": "large black spider",
+          "score": 0.35272952914237976
+        },
+        {
+          "concept": "two red eyes",
+          "score": 0.3454110026359558
+        },
+        {
+          "concept": "long wings",
+          "score": 0.3374299108982086
+        },
+        {
+          "concept": "long bill",
+          "score": 0.3116375207901001
+        },
+        {
+          "concept": "white underbelly",
+          "score": 0.3108328580856323
+        },
+        {
+          "concept": "small bill",
+          "score": 0.2732546329498291
+        },
+        {
+          "concept": "black legs",
+          "score": 0.26037290692329407
+        }
+      ],
+      "image_file": "images/case_06_idx_56.jpg",
+      "gt_overlay_file": "gt_overlays/case_06_idx_56_gt.png",
+      "annotations": [
+        {
+          "label": "long hooked beak",
+          "logit": 0.75,
+          "box": [
+            337.1059875488281,
+            139.10931396484375,
+            392.39208984375,
+            178.4107208251953
+          ]
+        },
+        {
+          "label": "large white bird",
+          "logit": 0.55,
+          "box": [
+            56.243255615234375,
+            88.48501586914062,
+            394.0575256347656,
+            345.39630126953125
+          ]
+        },
+        {
+          "label": "long black legs",
+          "logit": 0.28,
+          "box": [
+            202.1472625732422,
+            293.0010986328125,
+            224.5172576904297,
+            344.299560546875
+          ]
+        },
+        {
+          "label": "long white legs",
+          "logit": 0.31,
+          "box": [
+            202.1472625732422,
+            293.0010986328125,
+            224.5172576904297,
+            344.299560546875
+          ]
+        },
+        {
+          "label": "long black legs",
+          "logit": 0.31,
+          "box": [
+            199.4069366455078,
+            285.9120178222656,
+            296.0725402832031,
+            343.53192138671875
+          ]
+        },
+        {
+          "label": "long white legs",
+          "logit": 0.25,
+          "box": [
+            199.4069366455078,
+            285.9120178222656,
+            296.0725402832031,
+            343.53192138671875
+          ]
+        },
+        {
+          "label": "wingspan of up to 3 5 feet",
+          "logit": 0.34,
+          "box": [
+            55.26393127441406,
+            102.50501251220703,
+            233.9857940673828,
+            183.18576049804688
+          ]
+        },
+        {
+          "label": "laysan albatross",
+          "logit": 0.33,
+          "box": [
+            2.72576904296875,
+            291.8415222167969,
+            453.09185791015625,
+            372.7960205078125
+          ]
+        },
+        {
+          "label": "white body",
+          "logit": 0.3,
+          "box": [
+            385.5977478027344,
+            131.7833709716797,
+            499.0075988769531,
+            193.77609252929688
+          ]
+        },
+        {
+          "label": "long yellow bill",
+          "logit": 0.36,
+          "box": [
+            328.6235046386719,
+            129.7937469482422,
+            403.79449462890625,
+            190.61732482910156
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 59,
+      "dataset_index": 59,
+      "target_idx": 1,
+      "target_name": "Laysan Albatross",
+      "gt_concepts": [
+        "wingspan of up to 3 5 feet",
+        "long hooked beak",
+        "long yellow bill",
+        "large white bird"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "long yellow bill",
+          "rank": 71
+        },
+        {
+          "concept": "long hooked beak",
+          "rank": 88
+        },
+        {
+          "concept": "wingspan of up to 3 5 feet",
+          "rank": 109
+        },
+        {
+          "concept": "large white bird",
+          "rank": 121
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "long thin neck",
+          "score": 2.4909310340881348
+        },
+        {
+          "concept": "white body",
+          "score": 2.2417054176330566
+        },
+        {
+          "concept": "black back",
+          "score": 2.018765449523926
+        },
+        {
+          "concept": "small round head",
+          "score": 1.8635022640228271
+        },
+        {
+          "concept": "long pointed bill",
+          "score": 1.7381478548049927
+        },
+        {
+          "concept": "long hooked bill",
+          "score": 1.7338316440582275
+        },
+        {
+          "concept": "white underbelly",
+          "score": 1.718411922454834
+        },
+        {
+          "concept": "long thin bill",
+          "score": 1.7106026411056519
+        },
+        {
+          "concept": "slender white body",
+          "score": 1.598585844039917
+        },
+        {
+          "concept": "long forked tail",
+          "score": 1.598562479019165
+        },
+        {
+          "concept": "forked tail",
+          "score": 1.554785966873169
+        },
+        {
+          "concept": "grey upperparts",
+          "score": 1.5502605438232422
+        },
+        {
+          "concept": "slender body",
+          "score": 1.536147952079773
+        },
+        {
+          "concept": "grayish brown body",
+          "score": 1.4820834398269653
+        },
+        {
+          "concept": "duck like bird",
+          "score": 1.4739172458648682
+        },
+        {
+          "concept": "medium sized duck",
+          "score": 1.4490712881088257
+        },
+        {
+          "concept": "red breast",
+          "score": 1.4027966260910034
+        },
+        {
+          "concept": "webbed feet",
+          "score": 1.3997185230255127
+        },
+        {
+          "concept": "long narrow wings",
+          "score": 1.375705361366272
+        },
+        {
+          "concept": "long thin body",
+          "score": 1.3576221466064453
+        }
+      ],
+      "image_file": "images/case_07_idx_59.jpg",
+      "gt_overlay_file": "gt_overlays/case_07_idx_59_gt.png",
+      "annotations": [
+        {
+          "label": "large white bird",
+          "logit": 0.59,
+          "box": [
+            121.21505737304688,
+            53.85552215576172,
+            228.76742553710938,
+            157.2791748046875
+          ]
+        },
+        {
+          "label": "long hooked beak",
+          "logit": 0.61,
+          "box": [
+            209.62362670898438,
+            62.99064254760742,
+            228.328125,
+            77.13883209228516
+          ]
+        },
+        {
+          "label": "laysan albatross",
+          "logit": 0.65,
+          "box": [
+            121.70140838623047,
+            178.1900634765625,
+            227.9798583984375,
+            256.12841796875
+          ]
+        },
+        {
+          "label": "wingspan of up to 3 5 feet",
+          "logit": 0.54,
+          "box": [
+            154.3829345703125,
+            57.8552131652832,
+            194.50839233398438,
+            156.58094787597656
+          ]
+        },
+        {
+          "label": "long yellow bill",
+          "logit": 0.31,
+          "box": [
+            204.37889099121094,
+            58.49956130981445,
+            234.46194458007812,
+            83.31526184082031
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 62,
+      "dataset_index": 62,
+      "target_idx": 2,
+      "target_name": "Sooty Albatross",
+      "gt_concepts": [
+        "black beak",
+        "long slim body",
+        "yellow eyes",
+        "long hooked bill",
+        "all dark plumage",
+        "large black bird",
+        "white wingtips",
+        "long wingspan",
+        "glossy black wings"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "glossy black wings",
+          "rank": 28
+        },
+        {
+          "concept": "long wingspan",
+          "rank": 30
+        },
+        {
+          "concept": "large black bird",
+          "rank": 37
+        },
+        {
+          "concept": "long slim body",
+          "rank": 42
+        },
+        {
+          "concept": "long hooked bill",
+          "rank": 46
+        },
+        {
+          "concept": "white wingtips",
+          "rank": 51
+        },
+        {
+          "concept": "all dark plumage",
+          "rank": 58
+        },
+        {
+          "concept": "black beak",
+          "rank": 260
+        },
+        {
+          "concept": "yellow eyes",
+          "rank": 401
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "large white bird",
+          "score": 4.5485687255859375
+        },
+        {
+          "concept": "long hooked beak",
+          "score": 4.2520246505737305
+        },
+        {
+          "concept": "long white legs",
+          "score": 4.163747787475586
+        },
+        {
+          "concept": "wingspan of up to 3 5 feet",
+          "score": 4.004329204559326
+        },
+        {
+          "concept": "long yellow bill",
+          "score": 3.575939893722534
+        },
+        {
+          "concept": "webbed feet",
+          "score": 3.367842674255371
+        },
+        {
+          "concept": "white body",
+          "score": 3.311309337615967
+        },
+        {
+          "concept": "long black wingtips",
+          "score": 3.0609190464019775
+        },
+        {
+          "concept": "white plumage",
+          "score": 2.9902350902557373
+        },
+        {
+          "concept": "small white bird",
+          "score": 2.6870007514953613
+        },
+        {
+          "concept": "black wingtips",
+          "score": 2.6579113006591797
+        },
+        {
+          "concept": "wingspan of about 3 feet",
+          "score": 2.474440813064575
+        },
+        {
+          "concept": "wingspan of 3 4 feet",
+          "score": 2.4659769535064697
+        },
+        {
+          "concept": "long black legs",
+          "score": 2.3737595081329346
+        },
+        {
+          "concept": "black band on the wing",
+          "score": 2.368135690689087
+        },
+        {
+          "concept": "black head with a white beak",
+          "score": 2.3657422065734863
+        },
+        {
+          "concept": "long curved bill",
+          "score": 2.3165481090545654
+        },
+        {
+          "concept": "long graceful neck",
+          "score": 2.2810356616973877
+        },
+        {
+          "concept": "white or pale gray body",
+          "score": 2.2803969383239746
+        },
+        {
+          "concept": "all white plumage",
+          "score": 2.2523512840270996
+        }
+      ],
+      "image_file": "images/case_08_idx_62.jpg",
+      "gt_overlay_file": "gt_overlays/case_08_idx_62_gt.png",
+      "annotations": [
+        {
+          "label": "large black bird",
+          "logit": 0.61,
+          "box": [
+            117.8330078125,
+            46.606170654296875,
+            384.7927551269531,
+            449.6938171386719
+          ]
+        },
+        {
+          "label": "black beak",
+          "logit": 0.65,
+          "box": [
+            141.2522430419922,
+            210.01205444335938,
+            167.37901306152344,
+            231.29942321777344
+          ]
+        },
+        {
+          "label": "yellow eyes",
+          "logit": 0.55,
+          "box": [
+            165.75888061523438,
+            203.552001953125,
+            178.0527801513672,
+            215.2463836669922
+          ]
+        },
+        {
+          "label": "all dark plumage",
+          "logit": 0.39,
+          "box": [
+            226.57920837402344,
+            47.03545379638672,
+            383.26068115234375,
+            204.2288818359375
+          ]
+        },
+        {
+          "label": "glossy black wings",
+          "logit": 0.3,
+          "box": [
+            226.57920837402344,
+            47.03545379638672,
+            383.26068115234375,
+            204.2288818359375
+          ]
+        },
+        {
+          "label": "long wingspan",
+          "logit": 0.25,
+          "box": [
+            226.57920837402344,
+            47.03545379638672,
+            383.26068115234375,
+            204.2288818359375
+          ]
+        },
+        {
+          "label": "long slim body",
+          "logit": 0.26,
+          "box": [
+            121.3204345703125,
+            223.34500122070312,
+            266.09686279296875,
+            448.5704650878906
+          ]
+        },
+        {
+          "label": "long wingspan",
+          "logit": 0.37,
+          "box": [
+            121.3204345703125,
+            223.34500122070312,
+            266.09686279296875,
+            448.5704650878906
+          ]
+        },
+        {
+          "label": "white wingtips",
+          "logit": 0.32,
+          "box": [
+            307.90020751953125,
+            236.39195251464844,
+            362.3294372558594,
+            266.3739929199219
+          ]
+        },
+        {
+          "label": "sooty albatross",
+          "logit": 0.26,
+          "box": [
+            197.20501708984375,
+            191.11984252929688,
+            362.88299560546875,
+            268.2534484863281
+          ]
+        },
+        {
+          "label": "long slim body",
+          "logit": 0.3,
+          "box": [
+            197.20501708984375,
+            191.11984252929688,
+            362.88299560546875,
+            268.2534484863281
+          ]
+        },
+        {
+          "label": "white wingtips",
+          "logit": 0.3,
+          "box": [
+            121.57112884521484,
+            390.9674377441406,
+            143.11166381835938,
+            448.6167907714844
+          ]
+        },
+        {
+          "label": "long hooked bill",
+          "logit": 0.3,
+          "box": [
+            135.84072875976562,
+            203.54806518554688,
+            177.4342498779297,
+            237.10308837890625
+          ]
+        },
+        {
+          "label": "long hooked bill",
+          "logit": 0.34,
+          "box": [
+            142.07522583007812,
+            211.10931396484375,
+            166.19387817382812,
+            230.27500915527344
+          ]
+        }
+      ]
+    },
+    {
+      "subset_index": 75,
+      "dataset_index": 75,
+      "target_idx": 2,
+      "target_name": "Sooty Albatross",
+      "gt_concepts": [
+        "black beak",
+        "yellow eyes",
+        "long hooked bill",
+        "all dark plumage",
+        "large black bird",
+        "white wingtips",
+        "long wingspan",
+        "glossy black wings"
+      ],
+      "gt_ranks": [
+        {
+          "concept": "long hooked bill",
+          "rank": 17
+        },
+        {
+          "concept": "large black bird",
+          "rank": 26
+        },
+        {
+          "concept": "glossy black wings",
+          "rank": 28
+        },
+        {
+          "concept": "long wingspan",
+          "rank": 36
+        },
+        {
+          "concept": "black beak",
+          "rank": 40
+        },
+        {
+          "concept": "white wingtips",
+          "rank": 41
+        },
+        {
+          "concept": "all dark plumage",
+          "rank": 43
+        },
+        {
+          "concept": "yellow eyes",
+          "rank": 128
+        }
+      ],
+      "hit_at_focus_k": false,
+      "topk_predictions": [
+        {
+          "concept": "long brown tail",
+          "score": 1.2700321674346924
+        },
+        {
+          "concept": "small brown bird",
+          "score": 0.9123883247375488
+        },
+        {
+          "concept": "white throat",
+          "score": 0.52945876121521
+        },
+        {
+          "concept": "streaked upperparts",
+          "score": 0.5067183971405029
+        },
+        {
+          "concept": "small brown bill",
+          "score": 0.49606016278266907
+        },
+        {
+          "concept": "grayish brown head",
+          "score": 0.4248161315917969
+        },
+        {
+          "concept": "long curved beak",
+          "score": 0.40264302492141724
+        },
+        {
+          "concept": "gray head",
+          "score": 0.31763505935668945
+        },
+        {
+          "concept": "white belly",
+          "score": 0.3122195303440094
+        },
+        {
+          "concept": "yellowish upperparts",
+          "score": 0.2905190885066986
+        },
+        {
+          "concept": "streaked breast",
+          "score": 0.28745195269584656
+        },
+        {
+          "concept": "brown cap",
+          "score": 0.22384721040725708
+        },
+        {
+          "concept": "long thin body",
+          "score": 0.13857023417949677
+        },
+        {
+          "concept": "streaked brown back",
+          "score": 0.11105303466320038
+        },
+        {
+          "concept": "gray breast",
+          "score": 0.08952175080776215
+        },
+        {
+          "concept": "small sparrow like bird",
+          "score": 0.07037408649921417
+        },
+        {
+          "concept": "long hooked bill",
+          "score": 0.004060217645019293
+        },
+        {
+          "concept": "two white bars on the wings",
+          "score": 0.002163076074793935
+        },
+        {
+          "concept": "yellow breast",
+          "score": -0.003997677471488714
+        },
+        {
+          "concept": "black tail with white bars",
+          "score": -0.010036969557404518
+        }
+      ],
+      "image_file": "images/case_09_idx_75.jpg",
+      "gt_overlay_file": "gt_overlays/case_09_idx_75_gt.png",
+      "annotations": [
+        {
+          "label": "large black bird",
+          "logit": 0.65,
+          "box": [
+            204.53651428222656,
+            102.86293029785156,
+            348.4859619140625,
+            226.00308227539062
+          ]
+        },
+        {
+          "label": "black beak",
+          "logit": 0.51,
+          "box": [
+            206.01931762695312,
+            131.23121643066406,
+            233.4176025390625,
+            157.1774444580078
+          ]
+        },
+        {
+          "label": "glossy black wings",
+          "logit": 0.4,
+          "box": [
+            227.347900390625,
+            161.51910400390625,
+            340.30218505859375,
+            216.5079345703125
+          ]
+        },
+        {
+          "label": "long wingspan",
+          "logit": 0.27,
+          "box": [
+            227.347900390625,
+            161.51910400390625,
+            340.30218505859375,
+            216.5079345703125
+          ]
+        },
+        {
+          "label": "yellow eyes",
+          "logit": 0.45,
+          "box": [
+            236.0388641357422,
+            121.12496948242188,
+            246.37889099121094,
+            130.8114776611328
+          ]
+        },
+        {
+          "label": "all dark plumage",
+          "logit": 0.6,
+          "box": [
+            206.1446533203125,
+            103.64664459228516,
+            277.8403625488281,
+            159.4938201904297
+          ]
+        },
+        {
+          "label": "white wingtips",
+          "logit": 0.25,
+          "box": [
+            232.4083709716797,
+            117.4209976196289,
+            250.14627075195312,
+            134.19927978515625
+          ]
+        },
+        {
+          "label": "yellow eyes",
+          "logit": 0.33,
+          "box": [
+            232.4083709716797,
+            117.4209976196289,
+            250.14627075195312,
+            134.19927978515625
+          ]
+        },
+        {
+          "label": "long hooked bill",
+          "logit": 0.34,
+          "box": [
+            201.4175567626953,
+            126.95878601074219,
+            238.400146484375,
+            163.1512908935547
+          ]
+        },
+        {
+          "label": "long hooked bill",
+          "logit": 0.34,
+          "box": [
+            207.29934692382812,
+            133.046875,
+            232.2354736328125,
+            155.59088134765625
+          ]
+        },
+        {
+          "label": "glossy black wings",
+          "logit": 0.31,
+          "box": [
+            231.28341674804688,
+            164.63267517089844,
+            319.7098693847656,
+            206.9721221923828
+          ]
+        }
+      ]
+    }
+  ]
+}

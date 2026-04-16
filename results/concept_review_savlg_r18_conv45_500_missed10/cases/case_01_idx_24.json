@@ -1,0 +1,187 @@
+{
+  "subset_index": 24,
+  "dataset_index": 24,
+  "target_idx": 0,
+  "target_name": "Black footed Albatross",
+  "gt_concepts": [
+    "yellow bill",
+    "long wings",
+    "yellow beak",
+    "large wingspan"
+  ],
+  "gt_ranks": [
+    {
+      "concept": "large wingspan",
+      "rank": 29
+    },
+    {
+      "concept": "yellow beak",
+      "rank": 40
+    },
+    {
+      "concept": "long wings",
+      "rank": 49
+    },
+    {
+      "concept": "yellow bill",
+      "rank": 63
+    }
+  ],
+  "hit_at_focus_k": false,
+  "topk_predictions": [
+    {
+      "concept": "long tapered wings",
+      "score": 3.1882972717285156
+    },
+    {
+      "concept": "white body",
+      "score": 2.7508788108825684
+    },
+    {
+      "concept": "long wingspan",
+      "score": 2.4353485107421875
+    },
+    {
+      "concept": "glossy black wings",
+      "score": 2.421196460723877
+    },
+    {
+      "concept": "long narrow wings",
+      "score": 2.2423675060272217
+    },
+    {
+      "concept": "large white bird",
+      "score": 2.2111122608184814
+    },
+    {
+      "concept": "long hooked beak",
+      "score": 2.081285238265991
+    },
+    {
+      "concept": "long pointed wings",
+      "score": 1.9874619245529175
+    },
+    {
+      "concept": "white coloration on the body",
+      "score": 1.8407453298568726
+    },
+    {
+      "concept": "long white legs",
+      "score": 1.8376342058181763
+    },
+    {
+      "concept": "white body with grey wings",
+      "score": 1.8199865818023682
+    },
+    {
+      "concept": "wingspan of up to 3 5 feet",
+      "score": 1.8043254613876343
+    },
+    {
+      "concept": "gray or brown plumage",
+      "score": 1.7934168577194214
+    },
+    {
+      "concept": "long black legs",
+      "score": 1.7646898031234741
+    },
+    {
+      "concept": "large black bird",
+      "score": 1.7218915224075317
+    },
+    {
+      "concept": "black markings on the wings",
+      "score": 1.7037622928619385
+    },
+    {
+      "concept": "long forked tail",
+      "score": 1.6824487447738647
+    },
+    {
+      "concept": "white spots on the wings",
+      "score": 1.5659235715866089
+    },
+    {
+      "concept": "long orange red beak",
+      "score": 1.507201910018921
+    },
+    {
+      "concept": "all dark plumage",
+      "score": 1.4905507564544678
+    }
+  ],
+  "image_file": "images/case_01_idx_24.jpg",
+  "gt_overlay_file": "gt_overlays/case_01_idx_24_gt.png",
+  "annotations": [
+    {
+      "label": "black footed albatross",
+      "logit": 0.47,
+      "box": [
+        110.55480194091797,
+        261.2337341308594,
+        237.84405517578125,
+        383.8966979980469
+      ]
+    },
+    {
+      "label": "large wingspan",
+      "logit": 0.28,
+      "box": [
+        168.29168701171875,
+        262.70086669921875,
+        237.14617919921875,
+        308.9784240722656
+      ]
+    },
+    {
+      "label": "long wings",
+      "logit": 0.36,
+      "box": [
+        168.29168701171875,
+        262.70086669921875,
+        237.14617919921875,
+        308.9784240722656
+      ]
+    },
+    {
+      "label": "yellow beak",
+      "logit": 0.35,
+      "box": [
+        143.39212036132812,
+        302.07391357421875,
+        153.740478515625,
+        311.67315673828125
+      ]
+    },
+    {
+      "label": "yellow bill",
+      "logit": 0.27,
+      "box": [
+        143.39212036132812,
+        302.07391357421875,
+        153.740478515625,
+        311.67315673828125
+      ]
+    },
+    {
+      "label": "large wingspan",
+      "logit": 0.26,
+      "box": [
+        113.03795623779297,
+        313.28472900390625,
+        166.70394897460938,
+        381.940185546875
+      ]
+    },
+    {
+      "label": "long wings",
+      "logit": 0.34,
+      "box": [
+        113.03795623779297,
+        313.28472900390625,
+        166.70394897460938,
+        381.940185546875
+      ]
+    }
+  ]
+}

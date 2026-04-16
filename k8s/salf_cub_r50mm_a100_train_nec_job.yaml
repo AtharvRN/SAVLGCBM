@@ -1,0 +1,90 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: salf-cub-r50mm-a100-train-nec
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: salf-cub-r50mm-a100-train-nec
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: main
+        image: pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel
+        command:
+        - bash
+        - -lc
+        args:
+        - |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
+          export PYTHONUNBUFFERED=1
+
+          source /opt/conda/etc/profile.d/conda.sh || true
+
+          LOG_DIR=/workspace/SAVLGCBM/logs
+          mkdir -p "$LOG_DIR" /root/.cache/clip
+
+          apt-get update || true
+          apt-get install -y --no-install-recommends git curl wget rsync libgl1 libglib2.0-0 || true
+
+          if [ -f /workspace/SAVLGCBM/clip_cache/ViT-B-16.pt ]; then
+            cp -f /workspace/SAVLGCBM/clip_cache/ViT-B-16.pt /root/.cache/clip/ViT-B-16.pt
+          fi
+
+          cd /workspace/SAVLGCBM
+
+          bash scripts/pod_bootstrap_cbm.sh \
+            2>&1 | tee "$LOG_DIR/bootstrap_cbm_salf_r50_a100_job.log"
+
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate cbm
+
+          export PYTHONPATH=/workspace/SAVLGCBM
+          export CUDA_VISIBLE_DEVICES=0
+
+          python -u train_cbm.py \
+            --config /workspace/SAVLGCBM/configs/unified/cub_salf_cbm_resnet50_cub_mm_repro.json \
+            --cbl_batch_size 512 \
+            --num_workers 64 \
+            --spatial_num_workers 64 \
+            2>&1 | tee "$LOG_DIR/train_salf_r50mm_a100_b512_nw64.log"
+
+          RUN_DIR="$(ls -td /workspace/SAVLGCBM/saved_models/cub/salf_cbm_cub_* | head -n1)"
+          printf 'RUN_DIR=%s\n' "$RUN_DIR" | tee "$LOG_DIR/train_salf_r50mm_a100_b512_nw64_run_dir.log"
+
+          python -u sparse_evaluation.py \
+            --load_path "$RUN_DIR" \
+            --cbl_batch_size 512 \
+            --saga_batch_size 4096 \
+            --num_workers 64 \
+            2>&1 | tee "$LOG_DIR/nec_salf_r50mm_a100_b512_nw64.log"
+        resources:
+          limits:
+            cpu: 64
+            memory: 128Gi
+            nvidia.com/a100: 1
+          requests:
+            cpu: 64
+            memory: 128Gi
+            nvidia.com/a100: 1
+        volumeMounts:
+        - name: atharv-rwx-storage-1ti
+          mountPath: /workspace
+        - name: dev-shm
+          mountPath: /dev/shm
+      volumes:
+      - name: atharv-rwx-storage-1ti
+        persistentVolumeClaim:
+          claimName: atharv-rwx-storage-1ti
+      - name: dev-shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Gi

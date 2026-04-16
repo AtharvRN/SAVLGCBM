@@ -1,0 +1,167 @@
+{
+  "subset_index": 59,
+  "dataset_index": 59,
+  "target_idx": 1,
+  "target_name": "Laysan Albatross",
+  "gt_concepts": [
+    "wingspan of up to 3 5 feet",
+    "long hooked beak",
+    "long yellow bill",
+    "large white bird"
+  ],
+  "gt_ranks": [
+    {
+      "concept": "long yellow bill",
+      "rank": 71
+    },
+    {
+      "concept": "long hooked beak",
+      "rank": 88
+    },
+    {
+      "concept": "wingspan of up to 3 5 feet",
+      "rank": 109
+    },
+    {
+      "concept": "large white bird",
+      "rank": 121
+    }
+  ],
+  "hit_at_focus_k": false,
+  "topk_predictions": [
+    {
+      "concept": "long thin neck",
+      "score": 2.4909310340881348
+    },
+    {
+      "concept": "white body",
+      "score": 2.2417054176330566
+    },
+    {
+      "concept": "black back",
+      "score": 2.018765449523926
+    },
+    {
+      "concept": "small round head",
+      "score": 1.8635022640228271
+    },
+    {
+      "concept": "long pointed bill",
+      "score": 1.7381478548049927
+    },
+    {
+      "concept": "long hooked bill",
+      "score": 1.7338316440582275
+    },
+    {
+      "concept": "white underbelly",
+      "score": 1.718411922454834
+    },
+    {
+      "concept": "long thin bill",
+      "score": 1.7106026411056519
+    },
+    {
+      "concept": "slender white body",
+      "score": 1.598585844039917
+    },
+    {
+      "concept": "long forked tail",
+      "score": 1.598562479019165
+    },
+    {
+      "concept": "forked tail",
+      "score": 1.554785966873169
+    },
+    {
+      "concept": "grey upperparts",
+      "score": 1.5502605438232422
+    },
+    {
+      "concept": "slender body",
+      "score": 1.536147952079773
+    },
+    {
+      "concept": "grayish brown body",
+      "score": 1.4820834398269653
+    },
+    {
+      "concept": "duck like bird",
+      "score": 1.4739172458648682
+    },
+    {
+      "concept": "medium sized duck",
+      "score": 1.4490712881088257
+    },
+    {
+      "concept": "red breast",
+      "score": 1.4027966260910034
+    },
+    {
+      "concept": "webbed feet",
+      "score": 1.3997185230255127
+    },
+    {
+      "concept": "long narrow wings",
+      "score": 1.375705361366272
+    },
+    {
+      "concept": "long thin body",
+      "score": 1.3576221466064453
+    }
+  ],
+  "image_file": "images/case_07_idx_59.jpg",
+  "gt_overlay_file": "gt_overlays/case_07_idx_59_gt.png",
+  "annotations": [
+    {
+      "label": "large white bird",
+      "logit": 0.59,
+      "box": [
+        121.21505737304688,
+        53.85552215576172,
+        228.76742553710938,
+        157.2791748046875
+      ]
+    },
+    {
+      "label": "long hooked beak",
+      "logit": 0.61,
+      "box": [
+        209.62362670898438,
+        62.99064254760742,
+        228.328125,
+        77.13883209228516
+      ]
+    },
+    {
+      "label": "laysan albatross",
+      "logit": 0.65,
+      "box": [
+        121.70140838623047,
+        178.1900634765625,
+        227.9798583984375,
+        256.12841796875
+      ]
+    },
+    {
+      "label": "wingspan of up to 3 5 feet",
+      "logit": 0.54,
+      "box": [
+        154.3829345703125,
+        57.8552131652832,
+        194.50839233398438,
+        156.58094787597656
+      ]
+    },
+    {
+      "label": "long yellow bill",
+      "logit": 0.31,
+      "box": [
+        204.37889099121094,
+        58.49956130981445,
+        234.46194458007812,
+        83.31526184082031
+      ]
+    }
+  ]
+}

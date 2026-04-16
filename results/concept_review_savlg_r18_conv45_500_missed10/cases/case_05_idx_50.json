@@ -1,0 +1,202 @@
+{
+  "subset_index": 50,
+  "dataset_index": 50,
+  "target_idx": 1,
+  "target_name": "Laysan Albatross",
+  "gt_concepts": [
+    "wingspan of up to 3 5 feet",
+    "long hooked beak",
+    "long yellow bill",
+    "black wingtips",
+    "large white bird"
+  ],
+  "gt_ranks": [
+    {
+      "concept": "black wingtips",
+      "rank": 25
+    },
+    {
+      "concept": "long hooked beak",
+      "rank": 35
+    },
+    {
+      "concept": "long yellow bill",
+      "rank": 119
+    },
+    {
+      "concept": "large white bird",
+      "rank": 159
+    },
+    {
+      "concept": "wingspan of up to 3 5 feet",
+      "rank": 183
+    }
+  ],
+  "hit_at_focus_k": false,
+  "topk_predictions": [
+    {
+      "concept": "grey upperparts",
+      "score": 3.4642879962921143
+    },
+    {
+      "concept": "gray wings",
+      "score": 3.3872289657592773
+    },
+    {
+      "concept": "long forked tail",
+      "score": 2.369048833847046
+    },
+    {
+      "concept": "white body",
+      "score": 2.254134178161621
+    },
+    {
+      "concept": "long hooked bill",
+      "score": 1.63646399974823
+    },
+    {
+      "concept": "pale pink legs and feet",
+      "score": 1.607352375984192
+    },
+    {
+      "concept": "orange legs and feet",
+      "score": 1.5965760946273804
+    },
+    {
+      "concept": "pale pink legs",
+      "score": 1.5478872060775757
+    },
+    {
+      "concept": "webbed feet",
+      "score": 1.5408703088760376
+    },
+    {
+      "concept": "slender body",
+      "score": 1.5236117839813232
+    },
+    {
+      "concept": "slender white body",
+      "score": 1.5209236145019531
+    },
+    {
+      "concept": "yellow feet",
+      "score": 1.3271769285202026
+    },
+    {
+      "concept": "long black wingtips",
+      "score": 1.2676489353179932
+    },
+    {
+      "concept": "black cap on the head",
+      "score": 1.227005124092102
+    },
+    {
+      "concept": "white underparts",
+      "score": 1.2064727544784546
+    },
+    {
+      "concept": "orange legs",
+      "score": 1.111412525177002
+    },
+    {
+      "concept": "white body with grey wings",
+      "score": 0.8757304549217224
+    },
+    {
+      "concept": "white coloration on the body",
+      "score": 0.7092702388763428
+    },
+    {
+      "concept": "yellow beak",
+      "score": 0.6991506814956665
+    },
+    {
+      "concept": "white body with gray wings",
+      "score": 0.6957650184631348
+    }
+  ],
+  "image_file": "images/case_05_idx_50.jpg",
+  "gt_overlay_file": "gt_overlays/case_05_idx_50_gt.png",
+  "annotations": [
+    {
+      "label": "large white bird",
+      "logit": 0.58,
+      "box": [
+        126.37257385253906,
+        68.56315612792969,
+        210.22714233398438,
+        246.1465606689453
+      ]
+    },
+    {
+      "label": "long hooked beak",
+      "logit": 0.41,
+      "box": [
+        193.33206176757812,
+        152.5538330078125,
+        208.89578247070312,
+        162.14559936523438
+      ]
+    },
+    {
+      "label": "long yellow bill",
+      "logit": 0.29,
+      "box": [
+        193.33206176757812,
+        152.5538330078125,
+        208.89578247070312,
+        162.14559936523438
+      ]
+    },
+    {
+      "label": "black wingtips",
+      "logit": 0.31,
+      "box": [
+        164.7635040283203,
+        70.14625549316406,
+        182.48106384277344,
+        108.86193084716797
+      ]
+    },
+    {
+      "label": "black wingtips",
+      "logit": 0.31,
+      "box": [
+        164.7635040283203,
+        70.14625549316406,
+        182.48106384277344,
+        108.86193084716797
+      ]
+    },
+    {
+      "label": "wingspan of up to 3 5 feet",
+      "logit": 0.33,
+      "box": [
+        155.36953735351562,
+        69.84855651855469,
+        186.99510192871094,
+        147.50314331054688
+      ]
+    },
+    {
+      "label": "long yellow bill",
+      "logit": 0.3,
+      "box": [
+        189.21539306640625,
+        148.97360229492188,
+        211.7928466796875,
+        165.9046173095703
+      ]
+    },
+    {
+      "label": "wingspan of up to 3 5 feet",
+      "logit": 0.42,
+      "box": [
+        155.4177703857422,
+        70.07952880859375,
+        190.89666748046875,
+        244.90567016601562
+      ]
+    }
+  ]
+}

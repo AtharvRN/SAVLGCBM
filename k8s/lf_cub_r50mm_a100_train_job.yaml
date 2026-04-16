@@ -1,0 +1,80 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lf-cub-r50mm-a10-train
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: lf-cub-r50mm-a10-train
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-A10
+        nautilus.io/Institution: University_of_NebraskaLincoln
+      containers:
+      - name: main
+        image: pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel
+        command:
+        - bash
+        - -lc
+        args:
+        - |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
+          export PYTHONUNBUFFERED=1
+
+          source /opt/conda/etc/profile.d/conda.sh || true
+
+          LOG_DIR=/workspace/SAVLGCBM/logs
+          mkdir -p "$LOG_DIR" /root/.cache/clip
+
+          apt-get update || true
+          apt-get install -y --no-install-recommends git curl wget rsync libgl1 libglib2.0-0 || true
+
+          if [ -f /workspace/SAVLGCBM/clip_cache/RN50.pt ]; then
+            cp -f /workspace/SAVLGCBM/clip_cache/RN50.pt /root/.cache/clip/RN50.pt
+          fi
+
+          cd /workspace/SAVLGCBM
+
+          bash scripts/pod_bootstrap_cbm.sh \
+            2>&1 | tee "$LOG_DIR/bootstrap_cbm_lf_r50_a10_job.log"
+
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate cbm
+
+          export PYTHONPATH=/workspace/SAVLGCBM
+          export CUDA_VISIBLE_DEVICES=0
+
+          python -u train_cbm.py \
+            --config /workspace/SAVLGCBM/configs/unified/cub_lf_cbm_resnet50_cub_mm_repro.json \
+            2>&1 | tee "$LOG_DIR/train_lf_r50mm_a10.log"
+        resources:
+          limits:
+            cpu: 32
+            memory: 64Gi
+            nvidia.com/gpu: 1
+          requests:
+            cpu: 32
+            memory: 64Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - name: atharv-rwx-storage-1ti
+          mountPath: /workspace
+        - name: dev-shm
+          mountPath: /dev/shm
+      volumes:
+      - name: atharv-rwx-storage-1ti
+        persistentVolumeClaim:
+          claimName: atharv-rwx-storage-1ti
+      - name: dev-shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Gi
