@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import inspect
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -84,6 +85,12 @@ class Sam3ConceptMaskRunner:
         resolution = int(config.get("resolution", 1024))
         score_threshold = float(config.get("score_threshold", 0.5))
         nms_iou = float(config.get("nms_iou_threshold", 0.5))
+        inference_dtype_raw = str(
+            config.get(
+                "inference_dtype",
+                "bfloat16" if device.startswith("cuda") else "float32",
+            )
+        ).strip().lower()
         try:
             import sam3 as sam3_pkg
             from sam3.model_builder import build_sam3_image_model
@@ -119,8 +126,23 @@ class Sam3ConceptMaskRunner:
             build_kwargs["model_path"] = checkpoint_path
 
         self.base_model = build_sam3_image_model(**build_kwargs)
-        self.base_model.to(device)
+        dtype_map = {
+            "float32": torch.float32,
+            "fp32": torch.float32,
+            "float": torch.float32,
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+            "float16": torch.float16,
+            "fp16": torch.float16,
+            "half": torch.float16,
+        }
+        if inference_dtype_raw not in dtype_map:
+            raise ValueError(f"Unsupported inference_dtype: {inference_dtype_raw}")
+        self._inference_dtype = dtype_map[inference_dtype_raw]
+        self.base_model.to(device=device, dtype=self._inference_dtype)
         self.base_model.eval()
+        self._use_autocast = device.startswith("cuda") and self._inference_dtype in {torch.bfloat16, torch.float16}
+        self._install_module_input_dtype_hooks()
 
         self.base_transform = None
         try:
@@ -157,6 +179,56 @@ class Sam3ConceptMaskRunner:
         self._base_score_threshold = score_threshold
         self._base_nms_iou = nms_iou
         self._base_resolution = resolution
+
+    def _cast_batch_floats(self, value: Any) -> Any:
+        if torch.is_tensor(value):
+            if value.is_floating_point():
+                return value.to(dtype=self._inference_dtype)
+            return value
+        if isinstance(value, dict):
+            return {k: self._cast_batch_floats(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._cast_batch_floats(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self._cast_batch_floats(v) for v in value)
+        if hasattr(value, "__dict__"):
+            for key, child in vars(value).items():
+                setattr(value, key, self._cast_batch_floats(child))
+            return value
+        return value
+
+    def _cast_nested_to_dtype(self, value: Any, dtype: torch.dtype) -> Any:
+        if torch.is_tensor(value):
+            if value.is_floating_point() and value.dtype != dtype:
+                return value.to(dtype=dtype)
+            return value
+        if isinstance(value, dict):
+            return {k: self._cast_nested_to_dtype(v, dtype) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._cast_nested_to_dtype(v, dtype) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self._cast_nested_to_dtype(v, dtype) for v in value)
+        return value
+
+    def _module_input_dtype_pre_hook(self, module: torch.nn.Module, args: Tuple[Any, ...]) -> Tuple[Any, ...]:
+        weight = getattr(module, "weight", None)
+        if weight is None or not torch.is_tensor(weight) or not weight.is_floating_point():
+            return args
+        return tuple(self._cast_nested_to_dtype(arg, weight.dtype) for arg in args)
+
+    def _install_module_input_dtype_hooks(self) -> None:
+        supported = (
+            torch.nn.Linear,
+            torch.nn.Conv1d,
+            torch.nn.Conv2d,
+            torch.nn.Conv3d,
+            torch.nn.ConvTranspose1d,
+            torch.nn.ConvTranspose2d,
+            torch.nn.ConvTranspose3d,
+        )
+        for module in self.base_model.modules():
+            if isinstance(module, supported):
+                module.register_forward_pre_hook(self._module_input_dtype_pre_hook)
 
     def _candidate_bbox(
         self,
@@ -271,11 +343,19 @@ class Sam3ConceptMaskRunner:
         datapoint = self.base_transform(datapoint)
         batch = collate_fn_api([datapoint], dict_key="input")["input"]
         batch = copy_data_to_device(batch, self.base_model.device if hasattr(self.base_model, "device") else self._device, non_blocking=True)
-        outputs = self.base_model(batch)
-        last_output = outputs[-1]
-        pred_logits = last_output["pred_logits"]
-        pred_boxes = last_output["pred_boxes"]
-        pred_masks = last_output.get("pred_masks", None)
+        batch = self._cast_batch_floats(batch)
+        with torch.inference_mode():
+            autocast_ctx = (
+                torch.autocast(device_type="cuda", dtype=self._inference_dtype)
+                if self._use_autocast
+                else nullcontext()
+            )
+            with autocast_ctx:
+                outputs = self.base_model(batch)
+            last_output = outputs[-1]
+            pred_logits = last_output["pred_logits"]
+            pred_boxes = last_output["pred_boxes"]
+            pred_masks = last_output.get("pred_masks", None)
 
         out_probs = pred_logits.sigmoid()
         scores = out_probs[0, :, :].max(dim=-1)[0]
