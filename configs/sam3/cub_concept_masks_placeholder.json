@@ -1,0 +1,35 @@
+{
+  "dataset": "cub",
+  "split": "train",
+  "concept_set": "concept_files/cub_filtered.txt",
+  "output_root": "saved_activations/sam3_concept_masks",
+  "cache_name": "cub_sam3_concept_masks_v1",
+  "dry_run": true,
+  "subset": {
+    "max_images": 8,
+    "max_concepts": 16,
+    "image_indices": null,
+    "concept_indices": null
+  },
+  "sam3": {
+    "backend": "sam3",
+    "checkpoint": "",
+    "model_config": "",
+    "device": "cuda",
+    "prompt_template": "{concept}",
+    "score_threshold": 0.0,
+    "max_masks_per_concept": 1,
+    "mask_selection": "top_score"
+  },
+  "cache": {
+    "schema_version": "sam3_concept_masks_v1",
+    "mask_format": "npz_bool_hxw_v1",
+    "mask_coordinates": "original_image_pixels",
+    "write_metadata_json": true,
+    "write_preview_png": true
+  },
+  "notes": [
+    "This config uses the CUB concept set directly and does not apply concept-to-part mapping.",
+    "Start with dry_run=true plus small max_images/max_concepts before enabling real SAM3 inference."
+  ]
+}

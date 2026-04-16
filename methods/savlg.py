@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from data import utils as data_utils
 from data.concept_dataset import get_filtered_concepts_and_counts
+from data.sam3_concept_mask_cache import load_manifest
 from glm_saga.elasticnet import IndexedTensorDataset
 from methods.common import build_run_dir, save_args, write_artifacts
 from methods.lf import TransformedSubset, subset_targets, use_original_label_free_protocol
@@ -27,6 +28,52 @@ from methods.salf import (
 )
 from model.cbm import Backbone, BackboneCLIP, ConceptLayer, train_dense_final, train_sparse_final
 from PIL import Image
+
+
+def _sam3_manifest_dataset_indices(manifest_path: str, split_name: str) -> List[int]:
+    manifest = load_manifest(manifest_path)
+    indices = sorted(
+        {
+            int(record["dataset_index"])
+            for record in manifest.get("records", [])
+            if record.get("status") == "ok"
+        }
+    )
+    if not indices:
+        raise RuntimeError(
+            f"SAM3 manifest has no usable ok records for split={split_name}: {manifest_path}"
+        )
+    return indices
+
+
+def _sam3_manifest_path_for_split(args, split_name: str) -> str:
+    if split_name == "train":
+        path = getattr(args, "sam3_mask_manifest_train", "") or getattr(args, "sam3_mask_manifest", "")
+    elif split_name == "val":
+        path = getattr(args, "sam3_mask_manifest_val", "") or getattr(args, "sam3_mask_manifest", "")
+    else:
+        path = getattr(args, "sam3_mask_manifest", "")
+    return str(path or "")
+
+
+def _maybe_sam3_subset_indices(args, split_name: str) -> Optional[List[int]]:
+    if str(getattr(args, "savlg_supervision_source", "annotations")).lower() != "sam3_cache":
+        return None
+    if not bool(getattr(args, "sam3_mask_subset_to_manifest", False)):
+        return None
+    manifest_path = _sam3_manifest_path_for_split(args, split_name)
+    if not manifest_path:
+        raise ValueError(
+            f"--sam3_mask_subset_to_manifest requires a SAM3 manifest for split={split_name}"
+        )
+    indices = _sam3_manifest_dataset_indices(manifest_path, split_name)
+    logger.info(
+        "Restricting SAVLG {} split to {} image indices from SAM3 manifest {}",
+        split_name,
+        len(indices),
+        manifest_path,
+    )
+    return indices
 
 
 def create_savlg_splits(args):
@@ -42,12 +89,12 @@ def create_savlg_splits(args):
             f"[create_savlg_splits] raw datasets ready train={len(base_train_raw)} val={len(base_val_raw)}",
             flush=True,
         )
-        train_indices = list(range(len(base_train_raw)))
+        train_indices = _maybe_sam3_subset_indices(args, "train") or list(range(len(base_train_raw)))
         print(
             f"[create_savlg_splits] train_indices ready n={len(train_indices)}",
             flush=True,
         )
-        val_indices = list(range(len(base_val_raw)))
+        val_indices = _maybe_sam3_subset_indices(args, "val") or list(range(len(base_val_raw)))
         print(
             f"[create_savlg_splits] val_indices ready n={len(val_indices)}",
             flush=True,
@@ -538,6 +585,131 @@ def load_spatial_supervision(
     logger.info(
         "Saved SAVLG supervision cache to {} (kept {}/{})",
         cache_path,
+        int(len(keep_idx_array)),
+        len(concepts),
+    )
+    return global_concept_targets, filtered_entries, keep_idx_array.tolist()
+
+
+def _downsample_sam3_mask(mask: np.ndarray, args) -> np.ndarray:
+    mask_t = torch.from_numpy(mask.astype(np.float32)).view(1, 1, *mask.shape[:2])
+    mode = str(getattr(args, "sam3_mask_downsample_mode", "area")).lower()
+    if mode == "area":
+        down = F.interpolate(mask_t, size=(int(args.mask_h), int(args.mask_w)), mode="area")
+    elif mode in {"bilinear", "nearest"}:
+        kwargs = {"mode": mode}
+        if mode == "bilinear":
+            kwargs["align_corners"] = False
+        down = F.interpolate(mask_t, size=(int(args.mask_h), int(args.mask_w)), **kwargs)
+    else:
+        raise ValueError(f"Unsupported SAM3 mask downsample mode: {mode}")
+    down_np = down.squeeze(0).squeeze(0).numpy().astype(np.float32)
+    threshold = float(getattr(args, "sam3_mask_binarize_threshold", -1.0))
+    if threshold >= 0.0:
+        down_np = (down_np >= threshold).astype(np.float32)
+    return down_np
+
+
+def load_sam3_spatial_supervision(
+    manifest_path: str,
+    raw_dataset: Dataset,
+    concepts: Sequence[str],
+    args,
+    split_name: str,
+    keep_idx: Optional[Sequence[int]] = None,
+) -> Tuple[np.ndarray, List[Dict[int, np.ndarray]], List[int]]:
+    manifest = load_manifest(manifest_path)
+    manifest_root = Path(manifest_path).resolve().parent
+    global_concept_scores = np.zeros((len(raw_dataset), len(concepts)), dtype=np.float32)
+    mask_entries: List[Dict[int, np.ndarray]] = [dict() for _ in range(len(raw_dataset))]
+
+    row_to_dataset_idx = (
+        list(raw_dataset.indices)
+        if hasattr(raw_dataset, "indices")
+        else list(range(len(raw_dataset)))
+    )
+    dataset_idx_to_row = {int(ds_idx): int(row_idx) for row_idx, ds_idx in enumerate(row_to_dataset_idx)}
+    ok_records = 0
+    missing_masks = 0
+
+    logger.info(
+        "Building SAVLG supervision for {} from SAM3 manifest {} (rows={}, concepts={})",
+        split_name,
+        manifest_path,
+        len(row_to_dataset_idx),
+        len(concepts),
+    )
+    for record in tqdm(manifest.get("records", []), desc=f"SAVLG {split_name} SAM3 masks"):
+        if record.get("status") != "ok":
+            continue
+        row_idx = dataset_idx_to_row.get(int(record["dataset_index"]))
+        if row_idx is None:
+            continue
+        cidx = int(record["concept_index"])
+        if cidx < 0 or cidx >= len(concepts):
+            continue
+        mask_path = manifest_root / str(record["mask_path"])
+        if not mask_path.exists():
+            missing_masks += 1
+            continue
+        payload = np.load(mask_path)
+        if "mask" not in payload:
+            missing_masks += 1
+            continue
+        score = record.get("score")
+        score = 1.0 if score is None else float(score)
+        if score > global_concept_scores[row_idx, cidx]:
+            global_concept_scores[row_idx, cidx] = score
+        down_mask = _downsample_sam3_mask(payload["mask"].astype(bool), args)
+        existing = mask_entries[row_idx].get(cidx)
+        if existing is None:
+            mask_entries[row_idx][cidx] = down_mask
+        else:
+            np.maximum(existing, down_mask, out=existing)
+        ok_records += 1
+
+    if missing_masks:
+        logger.warning("SAM3 manifest referenced {} missing/invalid mask files", missing_masks)
+    if ok_records == 0:
+        raise RuntimeError(
+            f"SAM3 manifest produced no usable masks for split={split_name}: {manifest_path}"
+        )
+
+    if keep_idx is None:
+        manifest_keep = [
+            int(idx)
+            for idx in manifest.get("selected_concept_indices", [])
+            if 0 <= int(idx) < len(concepts)
+        ]
+        if manifest_keep:
+            keep_idx_array = np.asarray(sorted(set(manifest_keep)), dtype=np.int64)
+        else:
+            keep_mask = global_concept_scores.max(axis=0) > 0.0
+            keep_idx_array = np.where(keep_mask)[0]
+        if keep_idx_array.size == 0:
+            raise RuntimeError(
+                f"SAM3 manifest produced no usable masks for split={split_name}: {manifest_path}"
+            )
+    else:
+        keep_idx_array = np.asarray(list(keep_idx), dtype=np.int64)
+        if keep_idx_array.size == 0:
+            raise RuntimeError("SAVLG SAM3 keep_idx is empty.")
+
+    filtered_entries: List[Dict[int, np.ndarray]] = []
+    old_to_new = {old: new for new, old in enumerate(keep_idx_array.tolist())}
+    filtered_scores = global_concept_scores[:, keep_idx_array]
+    global_concept_targets = (filtered_scores > 0.0).astype(np.float32)
+    for entry in mask_entries:
+        new_entry = {}
+        for old_idx, mask in entry.items():
+            if old_idx in old_to_new:
+                new_entry[old_to_new[old_idx]] = mask
+        filtered_entries.append(new_entry)
+
+    logger.info(
+        "Loaded SAM3 SAVLG supervision from {} (ok_records={}, kept {}/{})",
+        manifest_path,
+        ok_records,
         int(len(keep_idx_array)),
         len(concepts),
     )
@@ -1926,8 +2098,18 @@ def train_savlg_cbm(args):
     classes = data_utils.get_classes(args.dataset)
     raw_concepts = data_utils.get_concepts(args.concept_set, args.filter_set)
     train_raw, val_raw, train_dataset, val_dataset, test_dataset, backbone = create_savlg_splits(args)
-    train_ann_dir = _annotation_split_dir(args.annotation_dir, args.dataset, "train")
-    val_ann_dir = _annotation_split_dir(args.annotation_dir, args.dataset, "val")
+    supervision_source = str(getattr(args, "savlg_supervision_source", "annotations")).lower()
+    if supervision_source == "annotations":
+        train_ann_dir = _annotation_split_dir(args.annotation_dir, args.dataset, "train")
+        val_ann_dir = _annotation_split_dir(args.annotation_dir, args.dataset, "val")
+    elif supervision_source == "sam3_cache":
+        train_ann_dir = None
+        val_ann_dir = None
+    else:
+        raise ValueError(
+            f"Unsupported SAVLG supervision source: {supervision_source}. "
+            "Expected one of ['annotations', 'sam3_cache']."
+        )
 
     filter_mode = _savlg_concept_filter_mode(args)
     if filter_mode == "vlg_global":
@@ -1955,13 +2137,35 @@ def train_savlg_cbm(args):
             f"Unsupported SAVLG concept filter mode: {filter_mode}. Expected one of ['spatial_threshold', 'vlg_global']."
         )
 
-    train_global_concepts, train_mask_entries, keep_idx = load_spatial_supervision(
-        train_raw, train_ann_dir, raw_concepts, args, "train", keep_idx=keep_idx
-    )
+    if supervision_source == "annotations":
+        train_global_concepts, train_mask_entries, keep_idx = load_spatial_supervision(
+            train_raw, train_ann_dir, raw_concepts, args, "train", keep_idx=keep_idx
+        )
+    else:
+        train_manifest = str(
+            getattr(args, "sam3_mask_manifest_train", "")
+            or getattr(args, "sam3_mask_manifest", "")
+        )
+        if not train_manifest:
+            raise ValueError("--savlg_supervision_source=sam3_cache requires --sam3_mask_manifest_train")
+        train_global_concepts, train_mask_entries, keep_idx = load_sam3_spatial_supervision(
+            train_manifest, train_raw, raw_concepts, args, "train", keep_idx=keep_idx
+        )
     concepts = [raw_concepts[i] for i in keep_idx]
-    val_global_concepts, val_mask_entries, _ = load_spatial_supervision(
-        val_raw, val_ann_dir, raw_concepts, args, "val", keep_idx=keep_idx
-    )
+    if supervision_source == "annotations":
+        val_global_concepts, val_mask_entries, _ = load_spatial_supervision(
+            val_raw, val_ann_dir, raw_concepts, args, "val", keep_idx=keep_idx
+        )
+    else:
+        val_manifest = str(
+            getattr(args, "sam3_mask_manifest_val", "")
+            or getattr(args, "sam3_mask_manifest", "")
+        )
+        if not val_manifest:
+            raise ValueError("--savlg_supervision_source=sam3_cache requires --sam3_mask_manifest_val")
+        val_global_concepts, val_mask_entries, _ = load_sam3_spatial_supervision(
+            val_manifest, val_raw, raw_concepts, args, "val", keep_idx=keep_idx
+        )
 
     train_supervision_ds = SpatialSupervisionDataset(
         train_dataset,
@@ -2155,6 +2359,7 @@ def train_savlg_cbm(args):
 
     method_log = {
         "cbm_variant": "savlg_cbm",
+        "supervision_source": supervision_source,
         "annotation_dir": args.annotation_dir,
         "annotation_threshold": float(getattr(args, "cbl_confidence_threshold", 0.15)),
         "concept_filter_mode": _savlg_concept_filter_mode(args),
@@ -2240,8 +2445,16 @@ def train_savlg_cbm(args):
             "box_anchored_top_patch": bool(float(getattr(args, "savlg_refine_w", 0.0)) > 0.0),
         },
         "supervision_cache_paths": {
-            "train": _supervision_cache_path(args, "train", concepts),
-            "val": _supervision_cache_path(args, "val", concepts),
+            "train": (
+                _supervision_cache_path(args, "train", concepts)
+                if supervision_source == "annotations"
+                else str(getattr(args, "sam3_mask_manifest_train", "") or getattr(args, "sam3_mask_manifest", ""))
+            ),
+            "val": (
+                _supervision_cache_path(args, "val", concepts)
+                if supervision_source == "annotations"
+                else str(getattr(args, "sam3_mask_manifest_val", "") or getattr(args, "sam3_mask_manifest", ""))
+            ),
         },
         "spatial_backbone": {
             "stage": str(getattr(args, "savlg_spatial_stage", "conv5")),

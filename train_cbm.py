@@ -830,6 +830,49 @@ def main():
         help="How SAVLG filters concepts before training. 'vlg_global' reuses the same concept-dataset filtering path as VLG-CBM.",
     )
     parser.add_argument(
+        "--savlg_supervision_source",
+        type=str,
+        default="annotations",
+        choices=["annotations", "sam3_cache"],
+        help="Spatial supervision source for SAVLG. sam3_cache reads SAM3 concept-mask manifests instead of annotation JSON boxes.",
+    )
+    parser.add_argument(
+        "--sam3_mask_manifest",
+        type=str,
+        default="",
+        help="Fallback SAM3 concept-mask manifest path used for both train and val if split-specific paths are omitted.",
+    )
+    parser.add_argument(
+        "--sam3_mask_manifest_train",
+        type=str,
+        default="",
+        help="SAM3 concept-mask manifest path for SAVLG train supervision.",
+    )
+    parser.add_argument(
+        "--sam3_mask_manifest_val",
+        type=str,
+        default="",
+        help="SAM3 concept-mask manifest path for SAVLG validation supervision.",
+    )
+    parser.add_argument(
+        "--sam3_mask_downsample_mode",
+        type=str,
+        default="area",
+        choices=["area", "bilinear", "nearest"],
+        help="How pixel-resolution SAM3 masks are resized to SAVLG patch targets.",
+    )
+    parser.add_argument(
+        "--sam3_mask_binarize_threshold",
+        type=float,
+        default=-1.0,
+        help="If >=0, binarize downsampled SAM3 patch masks at this threshold; negative keeps soft occupancy targets.",
+    )
+    parser.add_argument(
+        "--sam3_mask_subset_to_manifest",
+        action="store_true",
+        help="For SAM3-cache SAVLG smoke tests, restrict train/val datasets to image indices present in the manifests.",
+    )
+    parser.add_argument(
         "--loss_local_mil_w",
         type=float,
         default=0.0,
