@@ -11,7 +11,7 @@ existing concept-to-part mapping as a gate.
    - loads CUB train/val images from the same `DATASET_FOLDER/CUB/{train,test}` layout used by `data.utils`
    - supports small image/concept subsets
    - writes a manifest plus per-record metadata in dry-run mode
-   - can run a MedSAM3 LoRA backend through `Sam3ConceptMaskRunner.predict`
+   - can run a base SAM3 backend through `Sam3ConceptMaskRunner.predict`
    - records backend failures in the manifest when `continue_on_error=true`
 
 2. `data/sam3_concept_mask_cache.py`
@@ -125,23 +125,23 @@ python scripts/generate_sam3_concept_masks.py \
 
 ## Current Status
 
-The MedSAM3 LoRA configs in this branch are now treated as deprecated
-comparison artifacts only. The generator refuses to run the `medsam3`/
-`medsam3_lora` backend for the final cache path.
+The base-SAM3 configs in this branch are the intended run targets:
 
-The intended target is a base-SAM3 backend wired to a local or gated
-`facebook/sam3` checkpoint, but that loader is not implemented yet in this
-branch.
+`configs/sam3/cub_concept_masks_base_20img_audit_pod.json`
+`configs/sam3/cub_concept_masks_base_100img_3concept_pod.json`
 
-## MedSAM3 LoRA Backend
+The MedSAM3 LoRA configs remain in the tree only as deprecated comparison
+artifacts. They are not referenced by the run scripts.
 
-`configs/sam3/cub_concept_masks_medsam3_pod.json` points at the current pod
-layout:
+## Base SAM3 Backend
+
+`configs/sam3/cub_concept_masks_base_100img_3concept_pod.json` points at the
+base-SAM3 layout:
 
 ```text
 /workspace/SAVLGCBM
-/workspace/MedSAM3
-/workspace/MedSAM3_v1/best_lora_weights.pt
+/workspace/sam3
+/workspace/checkpoints/sam3.pt
 ```
 
 Run a tiny real-inference subset with:
@@ -149,16 +149,15 @@ Run a tiny real-inference subset with:
 ```bash
 DATASET_FOLDER=/workspace/SAVLGCBM/datasets \
 python scripts/generate_sam3_concept_masks.py \
-  --config configs/sam3/cub_concept_masks_medsam3_pod.json \
+  --config configs/sam3/cub_concept_masks_base_100img_3concept_pod.json \
   --split train \
   --run \
-  --max_images 2 \
+  --max_images 100 \
   --max_concepts 3 \
   --overwrite
 ```
 
-This backend is deprecated for the final cache. It remains documented here only
-to explain the old 100-image/20-image audit artifacts.
+Use `SAM3_CHECKPOINT_PATH` to point at a different local checkpoint if needed.
 
 ## SAVLG Training Hook
 

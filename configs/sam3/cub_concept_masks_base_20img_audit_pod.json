@@ -1,0 +1,47 @@
+{
+  "dataset": "cub",
+  "split": "train",
+  "concept_set": "concept_files/cub_filtered.txt",
+  "output_root": "saved_activations/sam3_concept_masks",
+  "cache_name": "cub_sam3_concept_masks_base_20img_audit_v1",
+  "dry_run": true,
+  "subset": {
+    "max_images": 20,
+    "max_concepts": 3,
+    "image_indices": null,
+    "concept_indices": null
+  },
+  "sam3": {
+    "backend": "sam3",
+    "repo_path": "/workspace/sam3",
+    "checkpoint_path": "/workspace/checkpoints/sam3.pt",
+    "bpe_path": "/workspace/sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz",
+    "device": "cuda",
+    "resolution": 1024,
+    "prompt_template": "the visible bird region corresponding to {concept}",
+    "score_threshold": 0.5,
+    "nms_iou_threshold": 0.5,
+    "max_masks_per_concept": 1,
+    "candidate_top_k": 5,
+    "mask_selection": "score_area_constrained",
+    "selection_score_power": 1.0,
+    "selection_area_power": 0.2,
+    "min_mask_area_ratio": 0.005,
+    "max_mask_area_ratio": 0.35,
+    "selection_fallback": "top_score",
+    "continue_on_error": true
+  },
+  "cache": {
+    "schema_version": "sam3_concept_masks_v1",
+    "mask_format": "npz_bool_hxw_v1",
+    "mask_coordinates": "original_image_pixels",
+    "write_metadata_json": true,
+    "write_preview_png": true,
+    "write_candidate_previews": true,
+    "preview_alpha": 0.45
+  },
+  "notes": [
+    "Base SAM3 20-image audit cache.",
+    "Set SAM3_CHECKPOINT_PATH if the checkpoint should come from a different local location."
+  ]
+}

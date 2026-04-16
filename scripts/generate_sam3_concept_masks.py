@@ -12,10 +12,12 @@ import argparse
 import json
 import os
 import sys
+import inspect
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import torch
 from PIL import Image
 from tqdm import tqdm
 
@@ -59,13 +61,97 @@ class Sam3ConceptMaskRunner:
             int(config.get("candidate_top_k", config.get("max_masks_per_concept", 1))),
         )
         if self.backend == "sam3":
-            raise NotImplementedError(
-                "Base SAM3 inference is not wired in yet. Do not use MedSAM3/LoRA for the final cache."
-            )
-        if self.backend in {"medsam3", "medsam3_lora"}:
+            self._init_base_sam3(config)
+        elif self.backend in {"medsam3", "medsam3_lora"}:
             self._init_medsam3_lora(config)
         else:
             raise ValueError(f"Unsupported SAM3 backend: {self.backend}")
+
+    def _init_base_sam3(self, config: Dict[str, Any]) -> None:
+        repo_path = Path(config.get("repo_path", "/workspace/sam3")).expanduser()
+        if str(repo_path) not in sys.path:
+            sys.path.insert(0, str(repo_path))
+
+        checkpoint_path = str(
+            config.get("checkpoint_path")
+            or config.get("checkpoint")
+            or os.environ.get("SAM3_CHECKPOINT_PATH", "")
+        ).strip()
+        if not checkpoint_path:
+            raise ValueError(
+                "Base SAM3 requires checkpoint_path (or SAM3_CHECKPOINT_PATH). "
+                "Point this at the official SAM3 checkpoint."
+            )
+
+        device = str(config.get("device", "cuda"))
+        resolution = int(config.get("resolution", 1024))
+        score_threshold = float(config.get("score_threshold", 0.5))
+        nms_iou = float(config.get("nms_iou_threshold", 0.5))
+        bpe_path = str(
+            config.get("bpe_path")
+            or repo_path / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+        )
+
+        from sam3.model_builder import build_sam3_image_model
+
+        build_kwargs = {
+            "device": device,
+            "compile": False,
+            "eval_mode": True,
+        }
+        sig = inspect.signature(build_sam3_image_model)
+        if "bpe_path" in sig.parameters:
+            build_kwargs["bpe_path"] = bpe_path
+        if "load_from_HF" in sig.parameters:
+            build_kwargs["load_from_HF"] = False
+        if "checkpoint_path" in sig.parameters:
+            build_kwargs["checkpoint_path"] = checkpoint_path
+        elif "checkpoint" in sig.parameters:
+            build_kwargs["checkpoint"] = checkpoint_path
+        elif "weights_path" in sig.parameters:
+            build_kwargs["weights_path"] = checkpoint_path
+        elif "model_path" in sig.parameters:
+            build_kwargs["model_path"] = checkpoint_path
+
+        self.base_model = build_sam3_image_model(**build_kwargs)
+        self.base_model.to(device)
+        self.base_model.eval()
+
+        self.base_transform = None
+        try:
+            from sam3.train.transforms.basic_for_api import (
+                ComposeAPI,
+                NormalizeAPI,
+                RandomResizeAPI,
+                ToTensorAPI,
+            )
+
+            self.base_transform = ComposeAPI(
+                transforms=[
+                    RandomResizeAPI(
+                        sizes=resolution,
+                        max_size=resolution,
+                        square=True,
+                        consistent_transform=False,
+                    ),
+                    ToTensorAPI(),
+                    NormalizeAPI(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+                ]
+            )
+            self.base_batch_helpers = True
+        except Exception as exc:
+            raise ImportError(
+                "Base SAM3 import succeeded, but the SAM3 API transform stack could not be loaded. "
+                f"Missing or incompatible SAM3 package: {exc}"
+            ) from exc
+
+        from torchvision.ops import nms
+
+        self._nms = nms
+        self._device = device
+        self._base_score_threshold = score_threshold
+        self._base_nms_iou = nms_iou
+        self._base_resolution = resolution
 
     def _init_medsam3_lora(self, config: Dict[str, Any]) -> None:
         repo_path = Path(config.get("repo_path", "/workspace/MedSAM3")).expanduser()
@@ -176,6 +262,8 @@ class Sam3ConceptMaskRunner:
         raise RuntimeError("No valid candidate remained after mask selection and no supported fallback was configured.")
 
     def predict(self, image_path: str, concept: str) -> Dict[str, Any]:
+        if self.backend == "sam3":
+            return self._predict_base_sam3(image_path, concept)
         if self.backend in {"medsam3", "medsam3_lora"}:
             results = self.inferencer.predict(image_path, [concept])
             result = results.get(0, {})
@@ -247,6 +335,102 @@ class Sam3ConceptMaskRunner:
                 "candidate_preview_payloads": candidate_preview_payloads,
             }
         raise AssertionError(f"Unhandled SAM3 backend: {self.backend}")
+
+    def _predict_base_sam3(self, image_path: str, concept: str) -> Dict[str, Any]:
+        from PIL import Image as PILImage
+        from sam3.train.data.collator import collate_fn_api
+        from sam3.train.data.sam3_image_dataset import (
+            Datapoint,
+            FindQueryLoaded,
+            Image as SAMImage,
+            InferenceMetadata,
+        )
+        from sam3.model.utils.misc import copy_data_to_device
+
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        pil_image = PILImage.open(image_path).convert("RGB")
+        w, h = pil_image.size
+        sam_image = SAMImage(data=pil_image, objects=[], size=[h, w])
+        query = FindQueryLoaded(
+            query_text=concept,
+            image_id=0,
+            object_ids_output=[],
+            is_exhaustive=True,
+            query_processing_order=0,
+            inference_metadata=InferenceMetadata(
+                coco_image_id=0,
+                original_image_id=0,
+                original_category_id=1,
+                original_size=[w, h],
+                object_id=0,
+                frame_index=0,
+            ),
+        )
+        datapoint = Datapoint(find_queries=[query], images=[sam_image])
+        datapoint = self.base_transform(datapoint)
+        batch = collate_fn_api([datapoint], dict_key="input")["input"]
+        batch = copy_data_to_device(batch, self.base_model.device if hasattr(self.base_model, "device") else self._device, non_blocking=True)
+        outputs = self.base_model(batch)
+        last_output = outputs[-1]
+        pred_logits = last_output["pred_logits"]
+        pred_boxes = last_output["pred_boxes"]
+        pred_masks = last_output.get("pred_masks", None)
+
+        out_probs = pred_logits.sigmoid()
+        scores = out_probs[0, :, :].max(dim=-1)[0]
+        keep = scores > self._base_score_threshold
+        num_keep = int(keep.sum().item())
+        if num_keep <= 0:
+            return {
+                "status": "no_mask",
+                "mask": None,
+                "score": None,
+                "bbox_xyxy": None,
+                "num_detections": 0,
+            }
+
+        boxes_cxcywh = pred_boxes[0, keep]
+        kept_scores = scores[keep]
+        cx, cy, w_box, h_box = boxes_cxcywh.unbind(-1)
+        x1 = (cx - w_box / 2) * w
+        y1 = (cy - h_box / 2) * h
+        x2 = (cx + w_box / 2) * w
+        y2 = (cy + h_box / 2) * h
+        boxes_xyxy = torch.stack([x1, y1, x2, y2], dim=-1)
+        keep_nms = self._nms(boxes_xyxy, kept_scores, self._base_nms_iou)
+        boxes_xyxy = boxes_xyxy[keep_nms]
+        kept_scores = kept_scores[keep_nms]
+        if pred_masks is not None:
+            masks_small = pred_masks[0, keep][keep_nms].sigmoid() > 0.5
+            import torch.nn.functional as F
+
+            masks_resized = F.interpolate(
+                masks_small.unsqueeze(0).float(),
+                size=(h, w),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0) > 0.5
+            masks_np = masks_resized.cpu().numpy()
+        else:
+            masks_np = None
+        if masks_np is None:
+            return {
+                "status": "no_mask",
+                "mask": None,
+                "score": None,
+                "bbox_xyxy": None,
+                "num_detections": int(len(kept_scores)),
+            }
+        best_idx = int(kept_scores.argmax().item())
+        return {
+            "status": "ok",
+            "mask": masks_np[best_idx].astype(bool),
+            "score": float(kept_scores[best_idx].item()),
+            "bbox_xyxy": [float(x) for x in boxes_xyxy[best_idx].tolist()],
+            "num_detections": int(len(kept_scores)),
+        }
 
 
 def parse_args() -> argparse.Namespace:
