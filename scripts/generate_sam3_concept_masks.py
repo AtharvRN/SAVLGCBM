@@ -39,6 +39,7 @@ from data.sam3_concept_mask_cache import (
     select_indices,
     write_json,
 )
+from data.concept_grounding import build_grounding_specs
 
 
 class Sam3ConceptMaskRunner:
@@ -61,9 +62,12 @@ class Sam3ConceptMaskRunner:
             1,
             int(config.get("candidate_top_k", config.get("max_masks_per_concept", 1))),
         )
-        if self.backend != "sam3":
+        if self.backend == "sam3":
+            self._init_base_sam3(config)
+        elif self.backend == "groundingdino_sam3":
+            self._init_groundingdino_sam3(config)
+        else:
             raise ValueError(f"Unsupported SAM3 backend: {self.backend}")
-        self._init_base_sam3(config)
 
     def _init_base_sam3(self, config: Dict[str, Any]) -> None:
         repo_path_raw = str(
@@ -179,6 +183,79 @@ class Sam3ConceptMaskRunner:
         self._base_score_threshold = score_threshold
         self._base_nms_iou = nms_iou
         self._base_resolution = resolution
+
+    def _load_sam3_image_predictor(self, config: Dict[str, Any]) -> None:
+        repo_path_raw = str(
+            config.get("repo_path") or os.environ.get("SAM3_REPO_PATH", "/workspace/sam3")
+        ).strip()
+        if repo_path_raw:
+            repo_path = Path(repo_path_raw).expanduser()
+            if repo_path.exists() and str(repo_path) not in sys.path:
+                sys.path.insert(0, str(repo_path))
+        checkpoint_path = str(
+            config.get("checkpoint_path")
+            or config.get("checkpoint")
+            or os.environ.get("SAM3_CHECKPOINT_PATH", "")
+        ).strip()
+        load_from_hf = bool(config.get("load_from_hf", not checkpoint_path))
+        device = str(config.get("device", "cuda"))
+        inference_dtype_raw = str(config.get("inference_dtype", "float32")).strip().lower()
+        try:
+            import sam3 as sam3_pkg
+            from sam3.model_builder import build_sam3_image_model
+            from sam3.model.sam1_task_predictor import SAM3InteractiveImagePredictor
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "No module named 'sam3'. Install the SAM3 package via requirements.txt "
+                "or clone it locally and set repo_path/SAM3_REPO_PATH."
+            ) from exc
+        sam3_package_dir = Path(sam3_pkg.__file__).resolve().parent
+        bpe_path = str(
+            config.get("bpe_path")
+            or sam3_package_dir / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+        )
+        build_kwargs = {"device": device, "compile": False, "eval_mode": True}
+        sig = inspect.signature(build_sam3_image_model)
+        if "bpe_path" in sig.parameters:
+            build_kwargs["bpe_path"] = bpe_path
+        if "load_from_HF" in sig.parameters:
+            build_kwargs["load_from_HF"] = load_from_hf
+        if checkpoint_path and "checkpoint_path" in sig.parameters:
+            build_kwargs["checkpoint_path"] = checkpoint_path
+        elif checkpoint_path and "checkpoint" in sig.parameters:
+            build_kwargs["checkpoint"] = checkpoint_path
+        dtype_map = {
+            "float32": torch.float32,
+            "fp32": torch.float32,
+            "float": torch.float32,
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+            "float16": torch.float16,
+            "fp16": torch.float16,
+            "half": torch.float16,
+        }
+        if inference_dtype_raw not in dtype_map:
+            raise ValueError(f"Unsupported inference_dtype: {inference_dtype_raw}")
+        self._inference_dtype = dtype_map[inference_dtype_raw]
+        self.base_model = build_sam3_image_model(**build_kwargs)
+        self.base_model.to(device=device, dtype=self._inference_dtype)
+        self.base_model.eval()
+        self._use_autocast = device.startswith("cuda") and self._inference_dtype in {torch.bfloat16, torch.float16}
+        self._install_module_input_dtype_hooks()
+        self._device = device
+        self._sam3_predictor = SAM3InteractiveImagePredictor(self.base_model)
+        self._cached_image_path: Optional[str] = None
+
+    def _init_groundingdino_sam3(self, config: Dict[str, Any]) -> None:
+        from data.groundingdino_inference import GroundingDinoBoxRunner
+
+        groundingdino_cfg = dict(config.get("groundingdino", {}))
+        sam3_box_cfg = dict(config.get("sam3_box", {}))
+        self._groundingdino = GroundingDinoBoxRunner(groundingdino_cfg)
+        self._groundingdino_top_k = int(groundingdino_cfg.get("top_k", self.candidate_top_k))
+        self._sam3_box_multimask_output = bool(sam3_box_cfg.get("multimask_output", True))
+        self._sam3_box_mask_threshold = float(sam3_box_cfg.get("mask_threshold", 0.0))
+        self._load_sam3_image_predictor({**config, **sam3_box_cfg})
 
     def _cast_batch_floats(self, value: Any) -> Any:
         if torch.is_tensor(value):
@@ -305,7 +382,108 @@ class Sam3ConceptMaskRunner:
     def predict(self, image_path: str, concept: str) -> Dict[str, Any]:
         if self.backend == "sam3":
             return self._predict_base_sam3(image_path, concept)
+        if self.backend == "groundingdino_sam3":
+            return self._predict_groundingdino_sam3(image_path, concept)
         raise AssertionError(f"Unhandled SAM3 backend: {self.backend}")
+
+    def _select_sam3_box_mask(
+        self,
+        masks: np.ndarray,
+        ious: np.ndarray,
+        box_xyxy: Sequence[float],
+        image_hw: Tuple[int, int],
+        grounding_score: float,
+    ) -> Dict[str, Any]:
+        h, w = image_hw
+        candidates = []
+        for idx in range(int(masks.shape[0])):
+            mask = masks[idx] > self._sam3_box_mask_threshold
+            area_ratio = float(mask.mean())
+            candidate = {
+                "mask": mask.astype(bool),
+                "score": float(ious[idx]),
+                "bbox_xyxy": [float(x) for x in box_xyxy],
+                "source_index": int(idx),
+                "area_ratio": area_ratio,
+                "grounding_score": float(grounding_score),
+            }
+            candidate["selection_metric"] = self._selection_metric(
+                score=float(candidate["score"]),
+                area_ratio=area_ratio,
+                mode=self.mask_selection,
+            )
+            candidates.append(candidate)
+        selected, ranked_indices, selected_mode, fallback_from = self._select_candidate(candidates)
+        candidate_summaries = []
+        candidate_payloads = []
+        for rank, cand_idx in enumerate(ranked_indices[: self.candidate_top_k]):
+            candidate = candidates[cand_idx]
+            candidate_summaries.append(
+                {
+                    "candidate_rank": int(rank),
+                    "source_index": int(candidate["source_index"]),
+                    "score": float(candidate["score"]),
+                    "grounding_score": float(candidate["grounding_score"]),
+                    "area_ratio": float(candidate["area_ratio"]),
+                    "bbox_xyxy": [float(x) for x in candidate["bbox_xyxy"]],
+                    "selection_metric": float(candidate["selection_metric"]),
+                    "selected": bool(candidate is selected),
+                }
+            )
+            candidate_payloads.append({"candidate_rank": int(rank), "mask": candidate["mask"]})
+        return {
+            "status": "ok",
+            "mask": selected["mask"],
+            "score": float(selected["score"]),
+            "bbox_xyxy": [float(x) for x in selected["bbox_xyxy"]],
+            "area_ratio": float(selected["area_ratio"]),
+            "grounding_score": float(grounding_score),
+            "mask_selection": selected_mode,
+            "selection_fallback_from": fallback_from,
+            "selected_source_index": int(selected["source_index"]),
+            "selected_selection_metric": float(selected["selection_metric"]),
+            "candidate_count": int(len(candidates)),
+            "candidate_summaries": candidate_summaries,
+            "candidate_preview_payloads": candidate_payloads,
+            "num_detections": int(len(candidates)),
+        }
+
+    def _predict_groundingdino_sam3(self, image_path: str, concept: str) -> Dict[str, Any]:
+        boxes = self._groundingdino.predict_boxes(
+            image_path=image_path,
+            prompt=concept,
+            top_k=self._groundingdino_top_k,
+        )
+        if not boxes:
+            return {
+                "status": "no_mask",
+                "mask": None,
+                "score": None,
+                "bbox_xyxy": None,
+                "num_detections": 0,
+            }
+        pil_image = Image.open(image_path).convert("RGB")
+        if self._cached_image_path != image_path:
+            self._sam3_predictor.set_image(pil_image)
+            self._cached_image_path = image_path
+        image_hw = (pil_image.size[1], pil_image.size[0])
+        box_xyxy = np.asarray(boxes[0]["box_xyxy"], dtype=np.float32)
+        masks, ious, _ = self._sam3_predictor.predict(
+            box=box_xyxy,
+            multimask_output=self._sam3_box_multimask_output,
+            return_logits=False,
+        )
+        masks = np.asarray(masks)
+        ious = np.asarray(ious)
+        if masks.ndim == 2:
+            masks = masks[None, ...]
+        return self._select_sam3_box_mask(
+            masks=masks,
+            ious=ious,
+            box_xyxy=box_xyxy,
+            image_hw=image_hw,
+            grounding_score=float(boxes[0]["score"]),
+        )
 
     def _predict_base_sam3(self, image_path: str, concept: str) -> Dict[str, Any]:
         from PIL import Image as PILImage
@@ -550,7 +728,7 @@ def build_records(
     split: str,
     image_indices: Sequence[int],
     concepts: Sequence[str],
-    concept_indices: Sequence[int],
+    concept_specs,
     backend: str,
     prompt_template: str,
     dry_run: bool,
@@ -560,21 +738,26 @@ def build_records(
     for dataset_index in tqdm(image_indices, desc=f"SAM3 cache plan ({split}) images"):
         image_path = resolve_sample_path(dataset_obj, dataset_index)
         image_size = resolve_image_size(dataset_obj, dataset_index)
-        for concept_index in concept_indices:
-            concept = concepts[int(concept_index)]
-            records.append(
-                build_manifest_record(
-                    split=split,
-                    dataset_index=int(dataset_index),
-                    image_path=image_path,
-                    image_size=image_size,
-                    concept_index=int(concept_index),
-                    concept=concept,
-                    backend=backend,
-                    prompt_template=prompt_template,
-                    status=status,
-                )
+        for spec in concept_specs:
+            record = build_manifest_record(
+                split=split,
+                dataset_index=int(dataset_index),
+                image_path=image_path,
+                image_size=image_size,
+                concept_index=int(spec.concept_index),
+                concept=concepts[int(spec.concept_index)],
+                backend=backend,
+                prompt_template=prompt_template,
+                status=status,
             )
+            record["raw_concept"] = spec.raw_concept
+            record["normalized_concept"] = spec.normalized_concept
+            record["normalized_prompt"] = spec.normalized_prompt
+            record["localizability"] = spec.localizability
+            record["keep_for_masking"] = bool(spec.keep_for_masking)
+            if backend == "groundingdino_sam3":
+                record["prompt"] = spec.normalized_prompt
+            records.append(record)
     return records
 
 
@@ -597,6 +780,16 @@ def main() -> None:
         subset_cfg,
         subset_cfg.get("max_concepts"),
     )
+    concept_processing_cfg = dict(config.get("concept_processing", {}))
+    concept_specs = build_grounding_specs(
+        concepts=concepts,
+        concept_indices=concept_indices,
+        overrides=concept_processing_cfg.get("overrides"),
+        allowed_localizability=concept_processing_cfg.get("allowed_localizability"),
+    )
+    if bool(concept_processing_cfg.get("filter_before_masking", False)):
+        concept_specs = [spec for spec in concept_specs if spec.keep_for_masking]
+        concept_indices = [spec.concept_index for spec in concept_specs]
     _ = _split_to_dataset_name(dataset_name, split)
     dataset_obj = _load_image_dataset(dataset_name, split)
     image_indices = select_indices(
@@ -622,7 +815,7 @@ def main() -> None:
         split=split,
         image_indices=image_indices,
         concepts=concepts,
-        concept_indices=concept_indices,
+        concept_specs=concept_specs,
         backend=backend,
         prompt_template=prompt_template,
         dry_run=dry_run,
@@ -657,6 +850,7 @@ def main() -> None:
                     record["selected_source_index"] = prediction.get("selected_source_index")
                     record["selected_selection_metric"] = prediction.get("selected_selection_metric")
                     record["candidate_count"] = prediction.get("candidate_count", prediction.get("num_detections"))
+                    record["grounding_score"] = prediction.get("grounding_score")
                     record["failure_reason"] = None if prediction["status"] == "ok" else prediction["status"]
                     if prediction["status"] == "ok":
                         mask_path = layout.root / split / str(record["mask_path"])
@@ -699,6 +893,7 @@ def main() -> None:
             "config_path": str(Path(args.config).resolve()),
             "dry_run": dry_run,
             "subset": subset_cfg,
+            "concept_processing": concept_processing_cfg,
             "sam3": sam3_cfg,
             "output_root": str(output_root),
             "cache_name": cache_name,

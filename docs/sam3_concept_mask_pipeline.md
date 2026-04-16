@@ -129,6 +129,66 @@ The SAM3 configs in this branch are the intended run targets:
 
 `configs/sam3/cub_concept_masks_base_20img_audit_pod.json`
 `configs/sam3/cub_concept_masks_base_100img_3concept_pod.json`
+`configs/sam3/cub_groundingdino_sam3_20img_audit_pod.json`
+
+## Recommended Grounding Pipeline
+
+Direct `image + raw concept text -> SAM3 mask` runs, but it tends to collapse to
+generic bird-region masks. The cleaner next-stage pipeline is:
+
+1. localizability filtering
+2. concept prompt normalization
+3. GroundingDINO text grounding to boxes
+4. SAM3 box-prompted mask prediction
+
+This branch now includes additive support for that path:
+
+- `data/concept_grounding.py`
+  - classifies concepts into `part_localizable`, `region_localizable`,
+    `multi_region_ambiguous`, and `non_localizable`
+  - normalizes prompts such as `long black bill -> bird bill`
+- `data/groundingdino_inference.py`
+  - loads GroundingDINO and returns box proposals for a normalized prompt
+- `scripts/generate_sam3_concept_masks.py`
+  - supports `backend: groundingdino_sam3`
+  - records both the raw concept and the normalized prompt in each record
+
+The intended config surface is:
+
+```json
+{
+  "concept_processing": {
+    "filter_before_masking": true,
+    "allowed_localizability": ["part_localizable", "region_localizable"]
+  },
+  "sam3": {
+    "backend": "groundingdino_sam3",
+    "groundingdino": { "...": "..." },
+    "sam3_box": { "...": "..." }
+  }
+}
+```
+
+Run a small audit with:
+
+```bash
+DATASET_FOLDER=/workspace/SAVLGCBM/datasets \
+python scripts/generate_sam3_concept_masks.py \
+  --config configs/sam3/cub_groundingdino_sam3_20img_audit_pod.json \
+  --split train \
+  --run \
+  --max_images 20 \
+  --overwrite
+```
+
+Each record now carries:
+
+- `raw_concept`
+- `normalized_concept`
+- `normalized_prompt`
+- `localizability`
+- `keep_for_masking`
+- `grounding_score` for the selected GroundingDINO proposal, when present
 
 ## Base SAM3 Backend
 
