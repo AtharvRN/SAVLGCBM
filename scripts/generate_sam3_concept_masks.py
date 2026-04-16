@@ -65,9 +65,13 @@ class Sam3ConceptMaskRunner:
         self._init_base_sam3(config)
 
     def _init_base_sam3(self, config: Dict[str, Any]) -> None:
-        repo_path = Path(config.get("repo_path", "/workspace/sam3")).expanduser()
-        if str(repo_path) not in sys.path:
-            sys.path.insert(0, str(repo_path))
+        repo_path_raw = str(
+            config.get("repo_path") or os.environ.get("SAM3_REPO_PATH", "/workspace/sam3")
+        ).strip()
+        if repo_path_raw:
+            repo_path = Path(repo_path_raw).expanduser()
+            if repo_path.exists() and str(repo_path) not in sys.path:
+                sys.path.insert(0, str(repo_path))
 
         checkpoint_path = str(
             config.get("checkpoint_path")
@@ -80,12 +84,20 @@ class Sam3ConceptMaskRunner:
         resolution = int(config.get("resolution", 1024))
         score_threshold = float(config.get("score_threshold", 0.5))
         nms_iou = float(config.get("nms_iou_threshold", 0.5))
+        try:
+            import sam3 as sam3_pkg
+            from sam3.model_builder import build_sam3_image_model
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "No module named 'sam3'. Install the SAM3 package via requirements.txt "
+                "or clone it locally and set repo_path/SAM3_REPO_PATH."
+            ) from exc
+
+        sam3_package_dir = Path(sam3_pkg.__file__).resolve().parent
         bpe_path = str(
             config.get("bpe_path")
-            or repo_path / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+            or sam3_package_dir / "assets" / "bpe_simple_vocab_16e6.txt.gz"
         )
-
-        from sam3.model_builder import build_sam3_image_model
 
         build_kwargs = {
             "device": device,

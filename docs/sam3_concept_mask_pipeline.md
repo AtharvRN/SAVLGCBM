@@ -157,6 +157,23 @@ python scripts/generate_sam3_concept_masks.py \
 Use `SAM3_CHECKPOINT_PATH` to point at a different local checkpoint if needed;
 otherwise the backend loads the base checkpoint from Hugging Face.
 
+For a one-shot environment install, `requirements.txt` now includes the SAM3
+runtime dependencies:
+
+- `git+https://github.com/facebookresearch/sam3.git`
+- `huggingface_hub`
+- `iopath`
+- `timm`
+- `decord`
+- `pycocotools`
+
+That means the generator can run from a local clone at `/workspace/sam3` or
+from an installed `sam3` package after:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
 ## SAVLG Training Hook
 
 The existing SAVLG path already consumes:
