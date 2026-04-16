@@ -310,7 +310,7 @@ def main() -> None:
                 if image_path is None:
                     raise RuntimeError("Real SAM3 generation currently requires file-backed datasets.")
                 try:
-                    prediction = runner.predict(str(image_path), str(record["concept"]))
+                    prediction = runner.predict(str(image_path), str(record["prompt"]))
                     record["status"] = prediction["status"]
                     record["score"] = prediction.get("score")
                     record["num_detections"] = prediction.get("num_detections")
