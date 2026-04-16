@@ -45,7 +45,7 @@ class Sam3ConceptMaskRunner:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.backend = str(config.get("backend", "medsam3_lora")).lower()
+        self.backend = str(config.get("backend", "sam3")).lower()
         self.mask_selection = str(config.get("mask_selection", "top_score")).lower()
         self.selection_score_power = float(config.get("selection_score_power", 1.0))
         self.selection_area_power = float(config.get("selection_area_power", 0.15))
@@ -60,15 +60,12 @@ class Sam3ConceptMaskRunner:
             1,
             int(config.get("candidate_top_k", config.get("max_masks_per_concept", 1))),
         )
-        if self.backend == "sam3":
-            self._init_base_sam3(config)
-        elif self.backend in {"medsam3", "medsam3_lora"}:
-            self._init_medsam3_lora(config)
-        else:
+        if self.backend != "sam3":
             raise ValueError(f"Unsupported SAM3 backend: {self.backend}")
+        self._init_base_sam3(config)
 
     def _init_base_sam3(self, config: Dict[str, Any]) -> None:
-        repo_path = Path(config.get("repo_path", "/workspace/MedSAM3")).expanduser()
+        repo_path = Path(config.get("repo_path", "/workspace/sam3")).expanduser()
         if str(repo_path) not in sys.path:
             sys.path.insert(0, str(repo_path))
 
@@ -149,42 +146,6 @@ class Sam3ConceptMaskRunner:
         self._base_nms_iou = nms_iou
         self._base_resolution = resolution
 
-    def _init_medsam3_lora(self, config: Dict[str, Any]) -> None:
-        repo_path = Path(config.get("repo_path", "/workspace/MedSAM3")).expanduser()
-        if not repo_path.is_dir():
-            raise FileNotFoundError(f"MedSAM3 repo_path does not exist: {repo_path}")
-        if str(repo_path) not in sys.path:
-            sys.path.insert(0, str(repo_path))
-
-        model_config = str(
-            config.get("model_config")
-            or config.get("config_path")
-            or repo_path / "configs" / "full_lora_config.yaml"
-        )
-        weights = str(config.get("lora_weights") or config.get("checkpoint") or "")
-        if not weights:
-            weights = None
-        resolution = int(config.get("resolution", 512))
-        score_threshold = float(config.get("score_threshold", 0.5))
-        nms_iou = float(config.get("nms_iou_threshold", 0.5))
-        device = str(config.get("device", "cuda"))
-
-        cwd = os.getcwd()
-        try:
-            os.chdir(repo_path)
-            from infer_sam import SAM3LoRAInference
-
-            self.inferencer = SAM3LoRAInference(
-                config_path=model_config,
-                weights_path=weights,
-                resolution=resolution,
-                detection_threshold=score_threshold,
-                nms_iou_threshold=nms_iou,
-                device=device,
-            )
-        finally:
-            os.chdir(cwd)
-
     def _candidate_bbox(
         self,
         boxes_np: Optional[np.ndarray],
@@ -260,76 +221,6 @@ class Sam3ConceptMaskRunner:
     def predict(self, image_path: str, concept: str) -> Dict[str, Any]:
         if self.backend == "sam3":
             return self._predict_base_sam3(image_path, concept)
-        if self.backend in {"medsam3", "medsam3_lora"}:
-            results = self.inferencer.predict(image_path, [concept])
-            result = results.get(0, {})
-            scores = result.get("scores")
-            masks = result.get("masks")
-            boxes = result.get("boxes")
-            if masks is None or scores is None or int(result.get("num_detections", 0)) <= 0:
-                return {
-                    "status": "no_mask",
-                    "mask": None,
-                    "score": None,
-                    "bbox_xyxy": None,
-                    "num_detections": int(result.get("num_detections", 0)),
-                }
-            scores_np = np.asarray(scores, dtype=np.float32)
-            masks_np = np.asarray(masks)
-            boxes_np = None if boxes is None else np.asarray(boxes, dtype=np.float32)
-            candidates: List[Dict[str, Any]] = []
-            for candidate_index in range(len(scores_np)):
-                mask = masks_np[candidate_index].astype(bool)
-                area_ratio = float(mask.mean())
-                bbox = self._candidate_bbox(boxes_np, candidate_index, mask)
-                candidates.append(
-                    {
-                        "source_index": int(candidate_index),
-                        "score": float(scores_np[candidate_index]),
-                        "mask": mask,
-                        "bbox_xyxy": bbox,
-                        "area_ratio": area_ratio,
-                    }
-                )
-
-            selected, ranked_indices, applied_mode, fallback_from = self._select_candidate(candidates)
-            candidate_summaries = []
-            candidate_preview_payloads = []
-            selected_source_index = int(selected["source_index"])
-            for candidate_rank, candidate_list_index in enumerate(ranked_indices[: self.candidate_top_k]):
-                candidate = candidates[candidate_list_index]
-                summary = {
-                    "candidate_rank": int(candidate_rank),
-                    "source_index": int(candidate["source_index"]),
-                    "score": float(candidate["score"]),
-                    "area_ratio": float(candidate["area_ratio"]),
-                    "bbox_xyxy": candidate["bbox_xyxy"],
-                    "selection_metric": float(candidate["selection_metric"]),
-                    "selected": bool(int(candidate["source_index"]) == selected_source_index),
-                }
-                candidate_summaries.append(summary)
-                candidate_preview_payloads.append(
-                    {
-                        "candidate_rank": int(candidate_rank),
-                        "source_index": int(candidate["source_index"]),
-                        "mask": candidate["mask"],
-                    }
-                )
-            return {
-                "status": "ok",
-                "mask": selected["mask"],
-                "score": float(selected["score"]),
-                "bbox_xyxy": selected["bbox_xyxy"],
-                "num_detections": int(len(scores_np)),
-                "area_ratio": float(selected["area_ratio"]),
-                "mask_selection": applied_mode,
-                "selection_fallback_from": fallback_from,
-                "selected_source_index": int(selected_source_index),
-                "selected_selection_metric": float(selected["selection_metric"]),
-                "candidate_count": int(len(candidates)),
-                "candidate_summaries": candidate_summaries,
-                "candidate_preview_payloads": candidate_preview_payloads,
-            }
         raise AssertionError(f"Unhandled SAM3 backend: {self.backend}")
 
     def _predict_base_sam3(self, image_path: str, concept: str) -> Dict[str, Any]:

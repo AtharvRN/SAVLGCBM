@@ -125,22 +125,19 @@ python scripts/generate_sam3_concept_masks.py \
 
 ## Current Status
 
-The base-SAM3 configs in this branch are the intended run targets:
+The SAM3 configs in this branch are the intended run targets:
 
 `configs/sam3/cub_concept_masks_base_20img_audit_pod.json`
 `configs/sam3/cub_concept_masks_base_100img_3concept_pod.json`
 
-The MedSAM3 LoRA configs remain in the tree only as deprecated comparison
-artifacts. They are not referenced by the run scripts.
-
 ## Base SAM3 Backend
 
 `configs/sam3/cub_concept_masks_base_100img_3concept_pod.json` points at the
-base-SAM3 layout:
+SAM3 layout:
 
 ```text
 /workspace/SAVLGCBM
-/workspace/MedSAM3
+/workspace/sam3
 Hugging Face checkpoint download for facebook/sam3
 ```
 
