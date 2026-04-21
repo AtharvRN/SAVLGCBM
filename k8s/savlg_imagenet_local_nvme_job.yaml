@@ -81,8 +81,21 @@ spec:
               rm -f /data/root/imagenet-dataset.zip
 
               echo "[stage-data] wiring expected torchvision-style paths"
-              ln -sfn /data/root/train /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/train
-              ln -sfn /data/root/val /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/ImageNet_val
+              DATA_BASE=/data/root
+              if [[ ! -d "${DATA_BASE}/train" || ! -d "${DATA_BASE}/val" ]]; then
+                # Some Kaggle zips add a single top-level folder. Detect it.
+                CANDIDATES=()
+                while IFS= read -r -d '' d; do CANDIDATES+=("$d"); done < <(find "${DATA_BASE}" -mindepth 1 -maxdepth 1 -type d -print0)
+                if [[ ${#CANDIDATES[@]} -eq 1 && -d "${CANDIDATES[0]}/train" && -d "${CANDIDATES[0]}/val" ]]; then
+                  DATA_BASE="${CANDIDATES[0]}"
+                else
+                  echo "Could not find train/val dirs after unzip under /data/root. Contents:" >&2
+                  ls -la /data/root >&2 || true
+                  exit 3
+                fi
+              fi
+              ln -sfn "${DATA_BASE}/train" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/train
+              ln -sfn "${DATA_BASE}/val" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/ImageNet_val
 
               echo "[stage-data] downloading annotation tarballs"
               if [[ -z "${ANNOT_TRAIN_URL:-}" || -z "${ANNOT_VAL_URL:-}" ]]; then
