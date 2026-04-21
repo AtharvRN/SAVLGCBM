@@ -56,7 +56,7 @@ spec:
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -y >/dev/null
-              apt-get install -y --no-install-recommends ca-certificates curl jq unzip >/dev/null
+              apt-get install -y --no-install-recommends ca-certificates curl jq unzip wget >/dev/null
 
               mkdir -p /data/root /data/datasets/imagenet/ILSVRC/Data/CLS-LOC
 
@@ -71,9 +71,9 @@ spec:
               fi
 
               echo "[stage-data] downloading ImageNet zip (this can take a while)"
-              curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
-                -H "Authorization: Bearer ${KAGGLE_KEY}" \
-                -o /data/root/imagenet-dataset.zip \
+              wget -O /data/root/imagenet-dataset.zip \
+                --header="Authorization: Bearer ${KAGGLE_KEY}" \
+                --tries=50 --timeout=30 \
                 "$KAGGLE_URL"
 
               echo "[stage-data] unzipping to /data/root (resume mode: unzip -n)"
@@ -163,4 +163,3 @@ spec:
               mountPath: /data
             - name: work
               mountPath: /work
-
