@@ -7,6 +7,16 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      # Pin to a specific node by hostname label (Gatekeeper blocks nodeName).
+      nodeSelector:
+        kubernetes.io/hostname: gp-engine.hpc.okstate.edu
+
+      # This node appears with an issue taint in the UI. Tolerate it explicitly.
+      tolerations:
+        - key: "nautilus.io/issue"
+          operator: "Equal"
+          value: "1663"
+          effect: "NoSchedule"
 
       # If your cluster labels A100 nodes, uncomment/adjust the selector.
       # nodeSelector:
@@ -47,8 +57,8 @@ spec:
               cpu: "1"
               memory: "4Gi"
             limits:
-              cpu: "2"
-              memory: "8Gi"
+              cpu: "1"
+              memory: "4Gi"
 
         - name: stage-data
           image: ubuntu:22.04
@@ -113,8 +123,8 @@ spec:
               cpu: "4"
               memory: "16Gi"
             limits:
-              cpu: "8"
-              memory: "32Gi"
+              cpu: "4"
+              memory: "16Gi"
 
       containers:
         - name: train
