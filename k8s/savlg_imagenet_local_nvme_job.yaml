@@ -49,6 +49,10 @@ spec:
             - |
               set -euo pipefail
               git clone --depth 1 https://github.com/AtharvRN/SAVLGCBM.git /work/SAVLGCBM
+              # The PRP stack often runs as a non-root user; make the repo and output dir writable.
+              mkdir -p /work/out
+              chmod 777 /work /work/out
+              chmod -R a+rX /work/SAVLGCBM
           volumeMounts:
             - name: work
               mountPath: /work
@@ -74,6 +78,8 @@ spec:
               apt-get install -y --no-install-recommends ca-certificates curl jq unzip wget >/dev/null
 
               mkdir -p /data/root /data/incoming /data/datasets/imagenet/ILSVRC/Data/CLS-LOC
+              # Ensure the main (non-root) training container can write annotations and receive kubectl cp uploads.
+              chmod 777 /data/root /data/incoming
 
               if [[ ! -f /secrets/kaggle.json ]]; then
                 echo "Missing /secrets/kaggle.json. Create secret kaggle-json (see YAML comment) and retry." >&2
@@ -111,6 +117,10 @@ spec:
               fi
               ln -sfn "${DATA_BASE}/train" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/train
               ln -sfn "${DATA_BASE}/val" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/ImageNet_val
+
+              # Pre-create writable annotations directory on NVMe for the training container.
+              mkdir -p /data/root/imagenet_annotations
+              chmod 777 /data/root/imagenet_annotations
 
               echo "[stage-data] done (waiting for annotation tarballs happens in the main container)"
           volumeMounts:
