@@ -1,0 +1,36 @@
+name: cbm
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy=1.24.3
+  - pandas=2.3.3
+  - scipy
+  - scikit-learn
+  - pillow
+  - matplotlib
+  - tqdm
+  - loguru
+  - opencv
+  - pytorch=2.2.2
+  - torchvision=0.17.2
+  - pytorch-cuda=12.1
+  - pip:
+      - mmengine==0.10.7
+      - mmcv-lite==2.2.0
+      - mmpretrain==1.2.0
+      - model-index==0.1.11
+      - modelindex==0.0.2
+      - addict==2.4.0
+      - ordered-set==4.1.0
+      - yapf==0.43.0
+      - pytorchcv==0.0.74
+      - torcheval==0.0.7
+      - ftfy==6.3.1
+      - regex
+      - einops==0.8.2
+      - git+https://github.com/openai/CLIP.git
+
