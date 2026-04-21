@@ -17,6 +17,7 @@ from data import utils as data_utils
 from glm_saga.elasticnet import IndexedTensorDataset
 from methods.common import build_run_dir, save_args, write_artifacts
 from model.cbm import Backbone, BackboneCLIP, train_dense_final, train_sparse_final
+from model.sam import SAM
 
 
 def _dataset_targets_view(base_dataset: Dataset):
@@ -178,7 +179,16 @@ def train_projection_layer(
     n_concepts: int,
 ) -> nn.Module:
     proj_layer = make_projection_layer(args, train_backbone_features.shape[1], n_concepts)
-    optimizer = torch.optim.Adam(proj_layer.parameters(), lr=args.proj_lr)
+    if getattr(args, "cbl_use_sam", False):
+        optimizer = SAM(
+            proj_layer.parameters(),
+            base_optimizer_cls=torch.optim.Adam,
+            rho=float(getattr(args, "cbl_sam_rho", 0.05)),
+            adaptive=bool(getattr(args, "cbl_sam_adaptive", False)),
+            lr=args.proj_lr,
+        )
+    else:
+        optimizer = torch.optim.Adam(proj_layer.parameters(), lr=args.proj_lr)
     indices = list(range(len(train_backbone_features)))
     best_val_loss = float("inf")
     best_state = {k: v.detach().cpu().clone() for k, v in proj_layer.state_dict().items()}
@@ -190,13 +200,24 @@ def train_projection_layer(
     pbar = tqdm(range(args.proj_steps), desc="LF projection", dynamic_ncols=True)
     for step in pbar:
         batch_idx = torch.LongTensor(random.sample(indices, batch_size))
-        proj_out = proj_layer(train_backbone_features[batch_idx].to(args.device))
-        target = train_clip_features[batch_idx].to(args.device)
-        loss = -cos_similarity_cubed(proj_out.T, target.T).mean()
+        batch_backbone = train_backbone_features[batch_idx].to(args.device)
+        batch_target = train_clip_features[batch_idx].to(args.device)
+
+        def compute_loss():
+            proj_out = proj_layer(batch_backbone)
+            return -cos_similarity_cubed(proj_out.T, batch_target.T).mean()
+
+        loss = compute_loss()
 
         optimizer.zero_grad()
         loss.backward()
-        optimizer.step()
+        if getattr(args, "cbl_use_sam", False):
+            optimizer.first_step(zero_grad=True)
+            second_loss = compute_loss()
+            second_loss.backward()
+            optimizer.second_step(zero_grad=True)
+        else:
+            optimizer.step()
 
         if step % eval_every == 0 or step == args.proj_steps - 1:
             proj_layer.eval()

@@ -260,6 +260,9 @@ def train_cbm_and_save(args):
             data_parallel=args.data_parallel,
             cached_val_embeddings=cached_val_embeddings,
             cached_val_concepts=cached_val_concepts,
+            use_sam=args.cbl_use_sam,
+            sam_rho=args.cbl_sam_rho,
+            sam_adaptive=args.cbl_sam_adaptive,
         )
     else:
         logger.info("Loading CBL from {}".format(args.load_dir))
@@ -328,10 +331,14 @@ def train_cbm_and_save(args):
     ##############################################
     #### Test the model on test set ####
     ##############################################
-    test_accuracy = test_model(
-        test_cbl_loader, backbone, cbl, normalization_layer, final_layer, args.device
-    )
-    logger.info(f"Test accuracy: {test_accuracy}")
+    if getattr(args, "skip_test_eval", False):
+        test_accuracy = None
+        logger.info("Skipping test evaluation (--skip_test_eval)")
+    else:
+        test_accuracy = test_model(
+            test_cbl_loader, backbone, cbl, normalization_layer, final_layer, args.device
+        )
+        logger.info(f"Test accuracy: {test_accuracy}")
 
     ##############################################
     # Store training metadata
@@ -362,9 +369,10 @@ def train_cbm_and_save(args):
         out_dict["dense_eval_splits"] = ["test"]
         json.dump(out_dict, f, indent=2)
 
-    utils.write_parameters_tensorboard(
-        tb_writer, vars(args), test_accuracy * 100.0, (nnz / total) * 100.0
-    )
+    if test_accuracy is not None:
+        utils.write_parameters_tensorboard(
+            tb_writer, vars(args), test_accuracy * 100.0, (nnz / total) * 100.0
+        )
 
     ##############################################
     ## Visualize top images for concepts ##
@@ -412,6 +420,23 @@ def main():
         help="Which CBM variant to train",
     )
     parser.add_argument("--dataset", type=str, default="cifar10")
+    parser.add_argument(
+        "--max_train_images",
+        type=int,
+        default=0,
+        help="If >0, limit the number of training images used (useful for ImageNet smoke tests).",
+    )
+    parser.add_argument(
+        "--max_test_images",
+        type=int,
+        default=0,
+        help="If >0, limit the number of test images used (useful for ImageNet smoke tests).",
+    )
+    parser.add_argument(
+        "--skip_test_eval",
+        action="store_true",
+        help="Skip test-set evaluation (useful when ImageNet val is not available or for quick smoke tests).",
+    )
     parser.add_argument(
         "--concept_set", type=str, default=None, help="path to concept set name"
     )
@@ -554,6 +579,22 @@ def main():
         choices=["adam", "sgd"],
         default="sgd",
         help="Optimizer used in CBL training.",
+    )
+    parser.add_argument(
+        "--cbl_use_sam",
+        action="store_true",
+        help="Wrap the CBL optimizer with Sharpness-Aware Minimization.",
+    )
+    parser.add_argument(
+        "--cbl_sam_rho",
+        type=float,
+        default=0.05,
+        help="Neighborhood size rho for Sharpness-Aware Minimization.",
+    )
+    parser.add_argument(
+        "--cbl_sam_adaptive",
+        action="store_true",
+        help="Use the adaptive SAM variant that scales perturbations by weight magnitude.",
     )
     parser.add_argument(
         "--cbl_scheduler",
@@ -990,6 +1031,34 @@ def main():
         help="How SAVLG rasterizes box supervision into patch targets",
     )
     parser.add_argument(
+        "--savlg_supervision_source",
+        type=str,
+        default="gdino",
+        choices=["gdino", "groundedsam2"],
+        help="Spatial supervision source used by SAVLG: stored GDINO boxes or cached GroundedSAM2 masks",
+    )
+    parser.add_argument(
+        "--savlg_groundedsam2_train_manifest",
+        type=str,
+        default=None,
+        help="Path to the GroundedSAM2 train manifest.json (or its containing directory) used when --savlg_supervision_source=groundedsam2",
+    )
+    parser.add_argument(
+        "--savlg_groundedsam2_val_manifest",
+        type=str,
+        default=None,
+        help="Path to the GroundedSAM2 val manifest.json (or its containing directory) used when --savlg_supervision_source=groundedsam2",
+    )
+    parser.add_argument(
+        "--savlg_stream_supervision",
+        action="store_true",
+        help=(
+            "Build SAVLG spatial supervision targets on-the-fly inside the dataset __getitem__ "
+            "instead of precomputing and saving a large *_supervision.pt cache. "
+            "Useful for quick experiments when annotations are on fast local storage."
+        ),
+    )
+    parser.add_argument(
         "--savlg_local_loss_mode",
         type=str,
         default="bce",
@@ -1001,6 +1070,18 @@ def main():
         type=float,
         default=0.0,
         help="Weight for penalizing normalized SAVLG spatial activation mass outside the GT box",
+    )
+    parser.add_argument(
+        "--savlg_absent_topk_w",
+        type=float,
+        default=0.0,
+        help="Weight for penalizing top-k spatial activation on concept-absent maps",
+    )
+    parser.add_argument(
+        "--savlg_absent_topk_fraction",
+        type=float,
+        default=0.1,
+        help="Fraction of highest-activation spatial locations to penalize for absent concepts",
     )
     parser.add_argument(
         "--patch_iou_thresh",

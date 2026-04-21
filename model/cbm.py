@@ -14,6 +14,7 @@ from tqdm import tqdm
 import clip
 from data import utils as data_utils
 from glm_saga.elasticnet import glm_saga
+from model.sam import SAM
 
 
 class CBM_model(torch.nn.Module):
@@ -469,16 +470,30 @@ def train_cbl(
     data_parallel=False,
     cached_val_embeddings: Optional[torch.Tensor] = None,
     cached_val_concepts: Optional[torch.Tensor] = None,
+    use_sam: bool = False,
+    sam_rho: float = 0.05,
+    sam_adaptive: bool = False,
 ):
     # setup optimizer
+    base_optimizer_cls = None
     if optimizer == "sgd":
-        optimizer = torch.optim.SGD(
-            cbl.parameters(), lr=lr, weight_decay=weight_decay, momentum=0.9
-        )
+        base_optimizer_cls = torch.optim.SGD
+        optimizer_kwargs = dict(lr=lr, weight_decay=weight_decay, momentum=0.9)
     elif optimizer == "adam":
-        optimizer = torch.optim.Adam(cbl.parameters(), lr=lr, weight_decay=weight_decay)
+        base_optimizer_cls = torch.optim.Adam
+        optimizer_kwargs = dict(lr=lr, weight_decay=weight_decay)
     else:
         raise ValueError
+    if use_sam:
+        optimizer = SAM(
+            cbl.parameters(),
+            base_optimizer_cls=base_optimizer_cls,
+            rho=sam_rho,
+            adaptive=sam_adaptive,
+            **optimizer_kwargs,
+        )
+    else:
+        optimizer = base_optimizer_cls(cbl.parameters(), **optimizer_kwargs)
     if finetune:
         optimizer.add_param_group({"params": backbone.parameters(), "lr": backbone_lr})
 
@@ -501,23 +516,29 @@ def train_cbl(
             features = features.to(device)  # (batch_size, feature_dim)
             concept_one_hot = concept_one_hot.to(device)  # (batch_size, n_concepts)
 
-            # forward pass
-            if finetune:
-                backbone.train()
-                embeddings = backbone(features)
-            else:
-                with torch.no_grad():
-                    embeddings = backbone(features)  # (batch_size, feature_dim)
-            concept_logits = cbl(embeddings)  # (batch_size, n_concepts)
+            def compute_batch_loss():
+                if finetune:
+                    backbone.train()
+                    embeddings = backbone(features)
+                else:
+                    with torch.no_grad():
+                        embeddings = backbone(features)
+                concept_logits = cbl(embeddings)
+                return loss_fn(concept_logits, concept_one_hot)
 
-            # calculate loss
-            batch_loss = loss_fn(concept_logits, concept_one_hot)
+            batch_loss = compute_batch_loss()
             train_loss += batch_loss.item()
 
             # backprop
             optimizer.zero_grad()
             batch_loss.backward()
-            optimizer.step()
+            if use_sam:
+                optimizer.first_step(zero_grad=True)
+                second_loss = compute_batch_loss()
+                second_loss.backward()
+                optimizer.second_step(zero_grad=True)
+            else:
+                optimizer.step()
 
             # print batch stats
             if (batch_idx + 1) % 1000 == 0:

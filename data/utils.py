@@ -4,7 +4,12 @@ import glob
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from matplotlib import pyplot as plt
+# Optional dependency: most training/eval paths do not need matplotlib.
+# Keep this import soft so lightweight pods can run without it.
+try:
+    from matplotlib import pyplot as plt  # type: ignore
+except Exception:  # pragma: no cover
+    plt = None  # type: ignore
 import torch
 from pytorchcv.model_provider import get_model as ptcv_get_model
 from torchvision import datasets, models, transforms
@@ -12,17 +17,34 @@ from tqdm import tqdm
 from loguru import logger
 import data.data_lp as data_lp
 import clip
-from PIL import Image
+from PIL import Image, ImageFile, UnidentifiedImageError
 
 # get from the environment variable
 DATASET_FOLDER = os.environ.get("DATASET_FOLDER", "datasets")
 
-DATASET_ROOTS = {
-    "imagenet_train": f"{DATASET_FOLDER}/imagenet/ILSVRC/Data/CLS-LOC/train",
-    "imagenet_val": f"{DATASET_FOLDER}/imagenet/ILSVRC/Data/CLS-LOC/ImageNet_val",
-    "cub_train": f"{DATASET_FOLDER}/CUB/train",
-    "cub_val": f"{DATASET_FOLDER}/CUB/test",
-}
+
+def get_dataset_roots() -> Dict[str, str]:
+    imagenet_root = os.environ.get(
+        "IMAGENET_DATASET_ROOT", f"{DATASET_FOLDER}/imagenet/ILSVRC/Data/CLS-LOC"
+    )
+    cub_root = os.environ.get("CUB_DATASET_ROOT", f"{DATASET_FOLDER}/CUB")
+    roots = {
+        "imagenet_train": os.environ.get(
+            "IMAGENET_TRAIN_ROOT", f"{imagenet_root}/train"
+        ),
+        "imagenet_val": os.environ.get(
+            "IMAGENET_VAL_ROOT", f"{imagenet_root}/ImageNet_val"
+        ),
+        "cub_train": os.environ.get("CUB_TRAIN_ROOT", f"{cub_root}/train"),
+        "cub_val": os.environ.get("CUB_VAL_ROOT", f"{cub_root}/test"),
+    }
+    broden_root = os.environ.get("BRODEN_ROOT")
+    if broden_root:
+        roots["broden"] = broden_root
+    return roots
+
+
+DATASET_ROOTS = get_dataset_roots()
 
 LABEL_FILES = {
     "places365": "concept_files/categories_places365_clean.txt",
@@ -121,6 +143,31 @@ def get_resnet_imagenet_preprocess():
         ]
     )
     return preprocess
+
+
+def _safe_imagenet_pil_loader(path: str) -> Image.Image:
+    """
+    Robust ImageNet loader.
+
+    We occasionally see a handful of tiny/truncated/corrupt JPEGs after large
+    extractions. Failing hard in the data loader is worse than returning a
+    placeholder for a tiny fraction of samples.
+    """
+    min_bytes = int(os.environ.get("CBM_MIN_IMAGE_BYTES", "1024"))
+    fallback_size = int(os.environ.get("CBM_FALLBACK_IMAGE_SIZE", "224"))
+
+    # Allow loading truncated JPEGs when possible.
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+    try:
+        if min_bytes > 0:
+            if os.path.getsize(path) < min_bytes:
+                raise OSError(f"image file too small (<{min_bytes} bytes)")
+        with Image.open(path) as img:
+            return img.convert("RGB")
+    except (UnidentifiedImageError, OSError, FileNotFoundError):
+        # Placeholder keeps dataset indexing stable (important for annotation-aligned datasets).
+        return Image.new("RGB", (fallback_size, fallback_size), color=(0, 0, 0))
 
 
 def get_data(dataset_name, preprocess=None):
@@ -258,21 +305,30 @@ def get_data(dataset_name, preprocess=None):
             cls_names_file=LABEL_FILES["aircraft"],
         )
         data.targets = data.labels
-    elif dataset_name in DATASET_ROOTS.keys():
+    elif dataset_name in get_dataset_roots().keys():
+        dataset_roots = get_dataset_roots()
         print(
-            f"[get_data] building ImageFolder for dataset_name={dataset_name} root={DATASET_ROOTS[dataset_name]}",
+            f"[get_data] building ImageFolder for dataset_name={dataset_name} root={dataset_roots[dataset_name]}",
             flush=True,
         )
-        data = datasets.ImageFolder(DATASET_ROOTS[dataset_name], preprocess)
+        if dataset_name.startswith("imagenet"):
+            data = datasets.ImageFolder(
+                dataset_roots[dataset_name],
+                transform=preprocess,
+                loader=_safe_imagenet_pil_loader,
+            )
+        else:
+            data = datasets.ImageFolder(dataset_roots[dataset_name], preprocess)
         print(
             f"[get_data] ready ImageFolder for dataset_name={dataset_name} len={len(data)}",
             flush=True,
         )
     elif dataset_name == "imagenet_broden":
+        dataset_roots = get_dataset_roots()
         data = torch.utils.data.ConcatDataset(
             [
-                datasets.ImageFolder(DATASET_ROOTS["imagenet_val"], preprocess),
-                datasets.ImageFolder(DATASET_ROOTS["broden"], preprocess),
+                datasets.ImageFolder(dataset_roots["imagenet_val"], preprocess),
+                datasets.ImageFolder(dataset_roots["broden"], preprocess),
             ]
         )
     return data
@@ -464,12 +520,16 @@ def save_filtered_concepts(
                 f.write("\n" + concept)
 
 def show_box(box, ax, label):
+    if plt is None:
+        raise ImportError(
+            "show_box() requires matplotlib, but it is not installed in this environment."
+        )
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor="green", facecolor=(0, 0, 0, 0), lw=2))
     ax.text(x0, y0, label)
 
-def plot_annotations(image_pil: Image.Image, annotations: List[Dict]) -> plt.Figure:
+def plot_annotations(image_pil: Image.Image, annotations: List[Dict]):
     """
     Plot annotations on image
 
@@ -484,6 +544,10 @@ def plot_annotations(image_pil: Image.Image, annotations: List[Dict]) -> plt.Fig
     Returns:
         plt.Figure: The figure containing the image with annotations.
     """
+    if plt is None:
+        raise ImportError(
+            "plot_annotations() requires matplotlib, but it is not installed in this environment."
+        )
     fig = plt.figure(figsize=(10, 10))
     plt.imshow(image_pil)
     for annotation in annotations:

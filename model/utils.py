@@ -6,7 +6,11 @@ import clip
 from data import utils as data_utils
 import json
 import numpy as np
-import matplotlib.pyplot as plt
+# Optional dependency: only needed for visualization helpers.
+try:
+    import matplotlib.pyplot as plt  # type: ignore
+except Exception:  # pragma: no cover
+    plt = None  # type: ignore
 
 from PIL import Image
 from loguru import logger
@@ -382,6 +386,10 @@ def get_bbox_iou(boxA, boxB):
 
 def display_top_activated_images(concept_idx, concepts_logits, model, target_layer, dataset, transform, k=20, device="cuda"):
     logger.info(f"Display top {k} activated images for concept idx: {concept_idx}")
+    if plt is None:
+        raise ImportError(
+            "display_top_activated_images() requires matplotlib, but it is not installed in this environment."
+        )
     concept_logit = concepts_logits[:, concept_idx]
 
     # sort by descending order of activation

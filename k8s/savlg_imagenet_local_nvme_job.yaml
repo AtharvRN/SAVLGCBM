@@ -1,0 +1,166 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: savlg-imagenet-local-1ep
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+
+      # If your cluster labels A100 nodes, uncomment/adjust the selector.
+      # nodeSelector:
+      #   nvidia.com/gpu.product: NVIDIA-A100-SXM4-80GB
+
+      volumes:
+        # Node-local scratch (fast). This is NOT persistent.
+        - name: data
+          emptyDir:
+            sizeLimit: 500Gi
+        - name: work
+          emptyDir: {}
+        # Optional: mount Kaggle token as a secret at /secrets/kaggle.json
+        # Create it with:
+        #   kubectl -n <ns> create secret generic kaggle-json --from-file=kaggle.json=$HOME/.kaggle/kaggle.json
+        - name: kaggle-json
+          secret:
+            secretName: kaggle-json
+            optional: true
+
+      initContainers:
+        - name: clone-repo
+          image: alpine/git:2.45.2
+          command: ["sh", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              git clone --depth 1 https://github.com/AtharvRN/SAVLGCBM.git /work/SAVLGCBM
+          volumeMounts:
+            - name: work
+              mountPath: /work
+
+        - name: stage-data
+          image: ubuntu:22.04
+          command: ["bash", "-lc"]
+          env:
+            - name: KAGGLE_URL
+              value: "https://www.kaggle.com/api/v1/datasets/download/mayurmadnani/imagenet-dataset"
+            # Provide public direct-download URLs for annotation tarballs here.
+            # If empty, the init container will exit with a clear error.
+            - name: ANNOT_TRAIN_URL
+              value: ""
+            - name: ANNOT_VAL_URL
+              value: ""
+          args:
+            - |
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -y >/dev/null
+              apt-get install -y --no-install-recommends ca-certificates curl jq unzip >/dev/null
+
+              mkdir -p /data/root /data/datasets/imagenet/ILSVRC/Data/CLS-LOC
+
+              if [[ ! -f /secrets/kaggle.json ]]; then
+                echo "Missing /secrets/kaggle.json. Create secret kaggle-json (see YAML comment) and retry." >&2
+                exit 2
+              fi
+              KAGGLE_KEY="$(jq -r .key /secrets/kaggle.json)"
+              if [[ -z "${KAGGLE_KEY:-}" || "$KAGGLE_KEY" == "null" ]]; then
+                echo "Could not read .key from /secrets/kaggle.json" >&2
+                exit 2
+              fi
+
+              echo "[stage-data] downloading ImageNet zip (this can take a while)"
+              curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
+                -H "Authorization: Bearer ${KAGGLE_KEY}" \
+                -o /data/root/imagenet-dataset.zip \
+                "$KAGGLE_URL"
+
+              echo "[stage-data] unzipping to /data/root (resume mode: unzip -n)"
+              unzip -n -q /data/root/imagenet-dataset.zip -d /data/root
+              rm -f /data/root/imagenet-dataset.zip
+
+              echo "[stage-data] wiring expected torchvision-style paths"
+              ln -sfn /data/root/train /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/train
+              ln -sfn /data/root/val /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/ImageNet_val
+
+              echo "[stage-data] downloading annotation tarballs"
+              if [[ -z "${ANNOT_TRAIN_URL:-}" || -z "${ANNOT_VAL_URL:-}" ]]; then
+                echo "Set ANNOT_TRAIN_URL and ANNOT_VAL_URL to public direct-download links for imagenet_{train,val}.tar.gz" >&2
+                exit 2
+              fi
+              mkdir -p /data/root/imagenet_annotations
+              curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
+                -o /data/root/imagenet_train.tar.gz "$ANNOT_TRAIN_URL"
+              curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
+                -o /data/root/imagenet_val.tar.gz "$ANNOT_VAL_URL"
+
+              echo "[stage-data] extracting annotations"
+              cd /data/root/imagenet_annotations
+              tar -xzf /data/root/imagenet_train.tar.gz
+              tar -xzf /data/root/imagenet_val.tar.gz
+              rm -f /data/root/imagenet_train.tar.gz /data/root/imagenet_val.tar.gz
+
+              echo "[stage-data] done"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: kaggle-json
+              mountPath: /secrets
+
+      containers:
+        - name: train
+          image: gitlab-registry.nrp-nautilus.io/prp/jupyter-stack/prp:latest
+          command: ["bash", "-lc"]
+          env:
+            - name: DATASET_FOLDER
+              value: /data/datasets
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+            # Make the robust loader ignore tiny JPEGs instead of crashing.
+            - name: CBM_MIN_IMAGE_BYTES
+              value: "2048"
+          args:
+            - |
+              set -euo pipefail
+              cd /work/SAVLGCBM
+
+              export SAVLGCBM_ROOT=/work/SAVLGCBM
+              bash scripts/pod_bootstrap_cbm.sh
+
+              source /opt/conda/etc/profile.d/conda.sh
+              conda activate cbm
+
+              mkdir -p /work/out/saved_models /work/out/saved_activations
+
+              python -u train_cbm.py \
+                --config configs/unified/imagenet_savlg_cbm.json \
+                --annotation_dir /data/root/imagenet_annotations \
+                --activation_dir /work/out/saved_activations \
+                --save_dir /work/out/saved_models \
+                --disable_activation_cache \
+                --savlg_stream_supervision \
+                --cbl_epochs 1 \
+                --cbl_batch_size 1024 \
+                --num_workers 16 \
+                --spatial_num_workers 16 \
+                --prompt_batch_size 1024 \
+                --savlg_supervision_source gdino \
+                --savlg_residual_spatial_alpha 0.8
+          resources:
+            requests:
+              cpu: "32"
+              memory: "64Gi"
+              nvidia.com/gpu: "1"
+              ephemeral-storage: "500Gi"
+            limits:
+              cpu: "32"
+              memory: "64Gi"
+              nvidia.com/gpu: "1"
+              ephemeral-storage: "500Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: work
+              mountPath: /work
+

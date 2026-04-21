@@ -29,6 +29,7 @@ from methods.lf import (
     use_original_label_free_protocol,
 )
 from model.cbm import train_dense_final, train_sparse_final
+from model.sam import SAM
 
 
 class RawSubset(Dataset):
@@ -79,6 +80,75 @@ class CLIPSpatialRN50Backbone(nn.Module):
         return x.float()
 
 
+class CLIPSpatialViTBackbone(nn.Module):
+    def __init__(self, backbone_name: str, device: str = "cuda"):
+        super().__init__()
+        if not backbone_name.startswith("clip_"):
+            raise ValueError(
+                f"CLIPSpatialViTBackbone expects a clip_* backbone name, got {backbone_name}."
+            )
+        model, preprocess = clip.load(backbone_name[5:], device=device)
+        visual = model.visual.float()
+        required = ("conv1", "class_embedding", "positional_embedding", "ln_pre", "transformer", "ln_post")
+        missing = [attr for attr in required if not hasattr(visual, attr)]
+        if missing:
+            raise NotImplementedError(
+                f"CLIPSpatialViTBackbone requires a CLIP ViT visual backbone. Missing={missing} for {backbone_name}."
+            )
+        self.visual = visual
+        self.preprocess = preprocess
+        self.device = device
+
+        pos_len = int(self.visual.positional_embedding.shape[0])
+        grid_tokens = pos_len - 1
+        grid = int(round(grid_tokens**0.5))
+        if grid * grid != grid_tokens:
+            raise RuntimeError(
+                f"Unexpected CLIP ViT positional embedding length={pos_len} for {backbone_name} (not square grid)."
+            )
+        self.grid = grid
+        self.output_dim = int(self.visual.conv1.out_channels)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.to(self.device)
+        x = x.type(self.visual.conv1.weight.dtype)
+
+        x = self.visual.conv1(x)  # [B, width, grid, grid]
+        x = x.reshape(x.shape[0], x.shape[1], -1)  # [B, width, grid^2]
+        x = x.permute(0, 2, 1)  # [B, grid^2, width]
+        x = torch.cat(
+            [
+                self.visual.class_embedding.to(x.dtype)
+                + torch.zeros(
+                    x.shape[0],
+                    1,
+                    x.shape[-1],
+                    dtype=x.dtype,
+                    device=x.device,
+                ),
+                x,
+            ],
+            dim=1,
+        )  # [B, grid^2 + 1, width]
+        x = x + self.visual.positional_embedding.to(x.dtype)
+        x = self.visual.ln_pre(x)
+
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.visual.transformer(x)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+
+        # Apply the post-transformer layer norm to patch tokens (CLIP applies it
+        # to the class token only in encode_image).
+        patch_tokens = self.visual.ln_post(x[:, 1:, :])  # [B, grid^2, width]
+        patch_tokens = patch_tokens.permute(0, 2, 1).reshape(
+            patch_tokens.shape[0],
+            patch_tokens.shape[-1],
+            self.grid,
+            self.grid,
+        )
+        return patch_tokens.float()
+
+
 class SpatialBackbone(nn.Module):
     def __init__(
         self,
@@ -90,15 +160,28 @@ class SpatialBackbone(nn.Module):
         self.device = device
         self.backbone_name = backbone_name
         self.spatial_stage = spatial_stage
-        if backbone_name == "clip_RN50":
+        if backbone_name.startswith("clip_"):
+            if backbone_name == "clip_RN50":
+                if spatial_stage != "conv5":
+                    raise ValueError(
+                        f"clip_RN50 spatial backbone only supports spatial_stage='conv5', got {spatial_stage}."
+                    )
+                clip_backbone = CLIPSpatialRN50Backbone(backbone_name, device=device)
+                self.backbone = clip_backbone
+                self.preprocess = clip_backbone.preprocess
+                self.output_dim = clip_backbone.output_dim
+                self.stage_dims = {"conv5": clip_backbone.output_dim}
+                return
+
             if spatial_stage != "conv5":
                 raise ValueError(
-                    f"clip_RN50 spatial backbone only supports spatial_stage='conv5', got {spatial_stage}."
+                    f"{backbone_name} spatial backbone currently supports only spatial_stage='conv5', got {spatial_stage}."
                 )
-            clip_backbone = CLIPSpatialRN50Backbone(backbone_name, device=device)
+            clip_backbone = CLIPSpatialViTBackbone(backbone_name, device=device)
             self.backbone = clip_backbone
             self.preprocess = clip_backbone.preprocess
             self.output_dim = clip_backbone.output_dim
+            # Keep the conv-stage naming to avoid requiring SAVLG/SALF config changes.
             self.stage_dims = {"conv5": clip_backbone.output_dim}
             return
         if backbone_name in {"resnet18_cub", "resnet50_cub", "resnet50_cub_mm", "resnet50"}:
@@ -197,11 +280,11 @@ class SpatialBackbone(nn.Module):
         x: torch.Tensor,
         stage_names: Sequence[str],
     ) -> dict[str, torch.Tensor]:
-        if self.backbone_name == "clip_RN50":
+        if self.backbone_name.startswith("clip_"):
             requested = set(stage_names)
             if requested != {"conv5"}:
                 raise ValueError(
-                    f"clip_RN50 only supports conv5 feature extraction, got {sorted(requested)}."
+                    f"{self.backbone_name} only supports conv5 feature extraction, got {sorted(requested)}."
                 )
             conv5 = self.backbone(x.to(self.device)).float()
             return {"conv5": conv5}
@@ -589,7 +672,16 @@ def train_spatial_cbl(
         parameter.requires_grad = False
 
     concept_layer.train()
-    optimizer = torch.optim.Adam(concept_layer.parameters(), lr=args.cbl_lr)
+    if getattr(args, "cbl_use_sam", False):
+        optimizer = SAM(
+            concept_layer.parameters(),
+            base_optimizer_cls=torch.optim.Adam,
+            rho=float(getattr(args, "cbl_sam_rho", 0.05)),
+            adaptive=bool(getattr(args, "cbl_sam_adaptive", False)),
+            lr=args.cbl_lr,
+        )
+    else:
+        optimizer = torch.optim.Adam(concept_layer.parameters(), lr=args.cbl_lr)
     best_loss = float("inf")
     best_state = None
 
@@ -599,24 +691,34 @@ def train_spatial_cbl(
             tqdm(train_loader, desc=f"SALF CBL epoch {epoch + 1}")
         ):
             images = images.to(args.device)
-            with torch.no_grad():
-                feats = backbone(images)
-            concept_maps = concept_layer(feats)
-            concept_maps = F.interpolate(
-                concept_maps,
-                size=(int(args.grid_h), int(args.grid_w)),
-                mode="bilinear",
-                align_corners=False,
-            )
             target = train_P[
                 batch_idx * train_loader.batch_size : batch_idx * train_loader.batch_size
                 + images.size(0)
             ].to(args.device)
-            loss = cbl_loss(concept_maps, target)
+
+            def compute_loss():
+                with torch.no_grad():
+                    feats = backbone(images)
+                concept_maps = concept_layer(feats)
+                concept_maps = F.interpolate(
+                    concept_maps,
+                    size=(int(args.grid_h), int(args.grid_w)),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                return cbl_loss(concept_maps, target)
+
+            loss = compute_loss()
 
             optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
+            if getattr(args, "cbl_use_sam", False):
+                optimizer.first_step(zero_grad=True)
+                second_loss = compute_loss()
+                second_loss.backward()
+                optimizer.second_step(zero_grad=True)
+            else:
+                optimizer.step()
             running += float(loss.item()) * images.size(0)
 
         train_loss = running / max(len(train_loader.dataset), 1)
