@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+5,Least Auklet,1,212,black cap and back,2.6675391793251038,11
+5,Least Auklet,2,118,webbed toes,1.8488558639179578,11
+5,Least Auklet,3,2,white face and underparts,1.5130591284145007,11
+5,Least Auklet,4,254,short black bill,1.5091792426326058,11
+5,Least Auklet,5,207,black head and back,0.11936077958142216,11
+5,Least Auklet,6,7,yellow bill,0.0,11
+5,Least Auklet,7,3,raucous call,0.0,11
+5,Least Auklet,8,8,small beak,0.0,11
+5,Least Auklet,9,1,wingspan of up to 3 5 feet,0.0,11
+5,Least Auklet,10,4,fast erratic flight patterns,0.0,11

@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+13,Indigo Bunting,1,192,thin pointed beak,4.877565844853719,30
+13,Indigo Bunting,2,474,white streaks on the wings,3.446690837542216,30
+13,Indigo Bunting,3,659,short beak,2.283678877353668,30
+13,Indigo Bunting,4,299,small bird,0.94390061100324,30
+13,Indigo Bunting,5,27,black mask around the eyes,0.683764691154162,30
+13,Indigo Bunting,6,612,blue plumage,0.5319515516360601,30
+13,Indigo Bunting,7,667,blue body,0.03857198444505532,30
+13,Indigo Bunting,8,7,yellow bill,0.0,30
+13,Indigo Bunting,9,3,raucous call,0.0,30
+13,Indigo Bunting,10,8,small beak,0.0,30

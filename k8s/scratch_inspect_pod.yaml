@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scratch-inspect-pod
+  namespace: wenglab-interpretable-ai
+spec:
+  restartPolicy: Never
+  containers:
+  - name: main
+    image: busybox:1.36
+    command:
+    - sh
+    - -lc
+    args:
+    - |
+      sleep infinity
+    volumeMounts:
+    - name: atharv-rwo-scratch-2ti
+      mountPath: /scratch
+  volumes:
+  - name: atharv-rwo-scratch-2ti
+    persistentVolumeClaim:
+      claimName: atharv-rwo-scratch-2ti

@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+18,Gray Catbird,1,88,small mouth,4.345724031842988,29
+18,Gray Catbird,2,499,long flowing tail,3.3640462530070336,29
+18,Gray Catbird,3,383,gray feathers,1.7224016682855015,29
+18,Gray Catbird,4,206,black cap,0.9881956787972614,29
+18,Gray Catbird,5,85,gray plumage,0.5962883460110632,29
+18,Gray Catbird,6,504,small round body,0.10246948987759393,29
+18,Gray Catbird,7,141,yellow eyes,0.08554585547796612,29
+18,Gray Catbird,8,7,yellow bill,0.0,29
+18,Gray Catbird,9,3,raucous call,0.0,29
+18,Gray Catbird,10,8,small beak,0.0,29

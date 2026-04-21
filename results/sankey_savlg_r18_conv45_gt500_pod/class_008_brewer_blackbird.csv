@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+8,Brewer Blackbird,1,381,yellow or orange beak,2.2687672089253152,28
+8,Brewer Blackbird,2,61,black wings,0.8164600433249559,28
+8,Brewer Blackbird,3,451,yellow eye,0.7594795147223132,28
+8,Brewer Blackbird,4,653,black or dark gray body,0.722960837451475,28
+8,Brewer Blackbird,5,3,raucous call,0.0,28
+8,Brewer Blackbird,6,7,yellow bill,0.0,28
+8,Brewer Blackbird,7,8,small beak,0.0,28
+8,Brewer Blackbird,8,1,wingspan of up to 3 5 feet,0.0,28
+8,Brewer Blackbird,9,4,fast erratic flight patterns,0.0,28
+8,Brewer Blackbird,10,9,rusty brown feathers,0.0,28

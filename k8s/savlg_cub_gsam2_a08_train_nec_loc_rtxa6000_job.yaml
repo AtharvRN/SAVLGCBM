@@ -1,0 +1,134 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: savlg-cub-gsam2-a08-train-nec-loc
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: savlg-cub-gsam2-a08-train-nec-loc
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-A10
+      tolerations:
+      - key: nautilus.io/issue
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: main
+        image: pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel
+        command: ["bash", "-lc"]
+        args:
+        - |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
+          export PYTHONUNBUFFERED=1
+
+          source /opt/conda/etc/profile.d/conda.sh || true
+
+          RUN_ID="$(date +%Y%m%d_%H%M%S)"
+          ALPHA="0.8"
+          TAG="a0p8"
+
+          REPO_DIR="/workspace/SAVLGCBM"
+          LOG_DIR="$REPO_DIR/logs"
+          SAVE_ROOT="$REPO_DIR/saved_models/savlg_cub_gsam2_${TAG}_${RUN_ID}"
+          RESULT_ROOT="$REPO_DIR/results/savlg_cub_gsam2_${TAG}_${RUN_ID}"
+          CONFIG="$REPO_DIR/configs/unified/cub_savlg_cbm_repro_oldbest_conv5_alpha010_outside_v1.json"
+
+          GSAM2_TRAIN_MANIFEST="/workspace/SAVLGCBM-sam3/results/groundedsam2_from_annotations_cub_train_full_bs16/manifest.json"
+          GSAM2_VAL_MANIFEST="/workspace/SAVLGCBM-sam3/results/groundedsam2_from_annotations_cub_val_full_bs16/manifest.json"
+
+          mkdir -p "$LOG_DIR" "$SAVE_ROOT" "$RESULT_ROOT"
+
+          apt-get update || true
+          apt-get install -y --no-install-recommends git curl wget rsync libgl1 libglib2.0-0 || true
+
+          cd "$REPO_DIR"
+          bash scripts/pod_bootstrap_cbm.sh 2>&1 | tee "$LOG_DIR/bootstrap_cbm_savlg_cub_gsam2_${TAG}_${RUN_ID}.log"
+
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate cbm
+          export PYTHONPATH="$REPO_DIR"
+
+          # Make sure the backbone checkpoint is staged before NEC.
+          mkdir -p /root/.torch/models
+          python - <<'PY'
+          from data import utils as data_utils
+          _m, _p = data_utils.get_target_model("resnet18_cub", "cpu")
+          print("warmed resnet18_cub")
+          PY
+
+          echo "[$(date)] starting train alpha=$ALPHA save_root=$SAVE_ROOT" | tee "$LOG_DIR/queue_savlg_cub_gsam2_${TAG}_${RUN_ID}.log"
+
+          CUDA_VISIBLE_DEVICES=0 python -u train_cbm.py \
+            --config "$CONFIG" \
+            --save_dir "$SAVE_ROOT" \
+            --recompute_spatial_sims \
+            --savlg_supervision_source groundedsam2 \
+            --savlg_groundedsam2_train_manifest "$GSAM2_TRAIN_MANIFEST" \
+            --savlg_groundedsam2_val_manifest "$GSAM2_VAL_MANIFEST" \
+            --savlg_residual_spatial_alpha "$ALPHA" \
+            --cbl_batch_size 256 \
+            2>&1 | tee "$LOG_DIR/train_savlg_cub_gsam2_${TAG}_${RUN_ID}.log"
+
+          RUN_DIR="$(find "$SAVE_ROOT" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
+          if [ -z "${RUN_DIR:-}" ]; then
+            echo "no nested run dir under $SAVE_ROOT"
+            exit 1
+          fi
+          echo "[$(date)] detected RUN_DIR=$RUN_DIR" | tee -a "$LOG_DIR/queue_savlg_cub_gsam2_${TAG}_${RUN_ID}.log"
+
+          CUDA_VISIBLE_DEVICES=0 python -u sparse_evaluation.py \
+            --load_path "$RUN_DIR" \
+            2>&1 | tee "$LOG_DIR/nec_savlg_cub_gsam2_${TAG}_${RUN_ID}.log"
+
+          CUDA_VISIBLE_DEVICES=0 python -u "$REPO_DIR/scripts/evaluate_native_spatial_maps.py" \
+            --load_paths "$RUN_DIR" \
+            --names "savlg_cub_gsam2_${TAG}_${RUN_ID}" \
+            --annotation_dir "$REPO_DIR/annotations" \
+            --dataset cub \
+            --split test \
+            --batch_size 32 \
+            --num_workers 10 \
+            --annotation_threshold 0.15 \
+            --activation_thresholds 0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,0.8,0.85,0.9,0.95 \
+            --threshold_mode fixed \
+            --map_source native \
+            --map_normalization concept_zscore_minmax \
+            --eval_subset_mode gt_present \
+            --box_iou_thresholds 0.1,0.3,0.5,0.7 \
+            --concept_mode intersection \
+            --output "$RESULT_ROOT/native_loc_${TAG}_${RUN_ID}.json" \
+            2>&1 | tee "$LOG_DIR/loc_savlg_cub_gsam2_${TAG}_${RUN_ID}.log"
+
+          echo "[$(date)] done. RUN_DIR=$RUN_DIR RESULT_ROOT=$RESULT_ROOT" | tee -a "$LOG_DIR/queue_savlg_cub_gsam2_${TAG}_${RUN_ID}.log"
+        resources:
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "16"
+            memory: 48Gi
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "16"
+            memory: 48Gi
+        volumeMounts:
+        - name: atharv-rwx-storage-1ti
+          mountPath: /workspace
+        - name: dev-shm
+          mountPath: /dev/shm
+      volumes:
+      - name: atharv-rwx-storage-1ti
+        persistentVolumeClaim:
+          claimName: atharv-rwx-storage-1ti
+      - name: dev-shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 24Gi

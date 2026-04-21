@@ -1,0 +1,174 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: savlg-r18-exact-cov0-alpha-sweep-a10-train-nec-loc
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: savlg-r18-exact-cov0-alpha-sweep-a10-train-nec-loc
+    spec:
+      restartPolicy: Never
+      # nodeSelector:
+      #   nvidia.com/gpu.product: NVIDIA-A10
+      containers:
+      - name: main
+        image: pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel
+        command:
+        - bash
+        - -lc
+        args:
+        - |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
+          export PYTHONUNBUFFERED=1
+
+          source /opt/conda/etc/profile.d/conda.sh || true
+
+          LOG_DIR=/workspace/SAVLGCBM/logs
+          SAVE_ROOT=/workspace/SAVLGCBM/saved_models/savlg_r18_exact_cov0_alpha_sweep
+          RESULT_ROOT=/workspace/SAVLGCBM/results/savlg_r18_exact_cov0_alpha_sweep
+          BASE_CONFIG=/workspace/SAVLGCBM/configs/unified/cub_savlg_cbm_repro_oldbest_conv5_alpha010_outside_v1.json
+          CONFIG=/tmp/cub_savlg_cbm_resnet18_exact_cov0.json
+          mkdir -p "$LOG_DIR" "$SAVE_ROOT" "$RESULT_ROOT"
+
+          apt-get update || true
+          apt-get install -y --no-install-recommends git curl wget rsync libgl1 libglib2.0-0 || true
+
+          cd /workspace/SAVLGCBM
+
+          bash scripts/pod_bootstrap_cbm.sh \
+            2>&1 | tee "$LOG_DIR/bootstrap_cbm_savlg_r18_exact_cov0_alpha_sweep_a10.log"
+
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate cbm
+
+          export PYTHONPATH=/workspace/SAVLGCBM
+          mkdir -p /root/.torch/models
+          echo "[$(date)] warming resnet18_cub backbone cache" | tee -a "$LOG_DIR/savlg_r18_exact_cov0_alpha_sweep_a10_queue.log"
+          python - <<'PY'
+          from data import utils as data_utils
+          _model, _ = data_utils.get_target_model("resnet18_cub", "cpu")
+          print("warmed resnet18_cub")
+          PY
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          base = Path("/workspace/SAVLGCBM/configs/unified/cub_savlg_cbm_repro_oldbest_conv5_alpha010_outside_v1.json")
+          out = Path("/tmp/cub_savlg_cbm_resnet18_exact_cov0.json")
+          cfg = json.loads(base.read_text())
+          cfg["savlg_coverage_w"] = 0.0
+          cfg["savlg_residual_spatial_alpha"] = 0.05
+          out.write_text(json.dumps(cfg, indent=2) + "\n")
+          print(f"wrote {out}")
+          PY
+
+          run_alpha() {
+            local gpu="$1"
+            local alpha="$2"
+            local tag
+            tag="$(echo "$alpha" | tr '.' 'p')"
+            local alpha_root="$SAVE_ROOT/alpha_${tag}"
+            local alpha_results="$RESULT_ROOT/alpha_${tag}"
+            local train_log="$LOG_DIR/train_savlg_r18_exact_cov0_alpha_${tag}_a10.log"
+            local nec_log="$LOG_DIR/nec_savlg_r18_exact_cov0_alpha_${tag}_a10.log"
+            local loc_log="$LOG_DIR/native_savlg_r18_exact_cov0_alpha_${tag}_a10.log"
+            mkdir -p "$alpha_root" "$alpha_results"
+
+            echo "[$(date)] starting alpha=$alpha gpu=$gpu" | tee -a "$LOG_DIR/savlg_r18_exact_cov0_alpha_sweep_a10_queue.log"
+
+            CUDA_VISIBLE_DEVICES="$gpu" python -u train_cbm.py \
+              --config "$CONFIG" \
+              --save_dir "$alpha_root" \
+              --savlg_residual_spatial_alpha "$alpha" \
+              2>&1 | tee "$train_log"
+
+            local run_dir
+            run_dir="$(find "$alpha_root" -maxdepth 1 -mindepth 1 -type d | sort | tail -n 1)"
+            if [ -z "$run_dir" ]; then
+              echo "[$(date)] no nested run dir under $alpha_root" | tee -a "$LOG_DIR/savlg_r18_exact_cov0_alpha_sweep_a10_queue.log"
+              return 1
+            fi
+
+            CUDA_VISIBLE_DEVICES="$gpu" python -u sparse_evaluation.py \
+              --load_path "$run_dir" \
+              2>&1 | tee "$nec_log"
+
+            CUDA_VISIBLE_DEVICES="$gpu" python -u /workspace/SAVLGCBM/scripts/evaluate_native_spatial_maps.py \
+              --load_paths "$run_dir" \
+              --names "savlg_r18_exact_cov0_alpha_${tag}" \
+              --annotation_dir /workspace/SAVLGCBM/annotations \
+              --dataset cub \
+              --split test \
+              --batch_size 32 \
+              --num_workers 10 \
+              --annotation_threshold 0.15 \
+              --activation_thresholds 0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,0.8,0.85,0.9,0.95 \
+              --threshold_mode fixed \
+              --map_source native \
+              --map_normalization concept_zscore_minmax \
+              --eval_subset_mode gt_present \
+              --box_iou_thresholds 0.1,0.3,0.5,0.7 \
+              --concept_mode intersection \
+              --output "$alpha_results/native_savlg_r18_exact_cov0_alpha_${tag}.json" \
+              2>&1 | tee "$loc_log"
+
+            echo "[$(date)] finished alpha=$alpha gpu=$gpu" | tee -a "$LOG_DIR/savlg_r18_exact_cov0_alpha_sweep_a10_queue.log"
+          }
+
+          run_alpha 0 0 &
+          pid0=$!
+          run_alpha 1 0.05 &
+          pid1=$!
+          wait "$pid0"
+          wait "$pid1"
+
+          run_alpha 0 0.1 &
+          pid2=$!
+          run_alpha 1 0.2 &
+          pid3=$!
+          wait "$pid2"
+          wait "$pid3"
+
+          run_alpha 0 0.4 &
+          pid4=$!
+          run_alpha 1 0.6 &
+          pid5=$!
+          wait "$pid4"
+          wait "$pid5"
+
+          run_alpha 0 0.8 &
+          pid6=$!
+          run_alpha 1 1.0 &
+          pid7=$!
+          wait "$pid6"
+          wait "$pid7"
+        resources:
+          requests:
+            nvidia.com/gpu: 2
+            cpu: "24"
+            memory: 48Gi
+          limits:
+            nvidia.com/gpu: 2
+            cpu: "24"
+            memory: 48Gi
+        volumeMounts:
+        - name: atharv-rwx-storage-1ti
+          mountPath: /workspace
+        - name: dev-shm
+          mountPath: /dev/shm
+      volumes:
+      - name: atharv-rwx-storage-1ti
+        persistentVolumeClaim:
+          claimName: atharv-rwx-storage-1ti
+      - name: dev-shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 48Gi

@@ -1,0 +1,200 @@
+large wingspan [2.804249] Black footed Albatross
+dark wingtips [1.474242] Black footed Albatross
+long wings [1.399387] Black footed Albatross
+black feet [0.816275] Black footed Albatross
+large size [0.311723] Black footed Albatross
+yellow beak [0.017519] Black footed Albatross
+yellow bill [0.000000] Black footed Albatross
+raucous call [0.000000] Black footed Albatross
+small beak [0.000000] Black footed Albatross
+wingspan of up to 3 5 feet [0.000000] Black footed Albatross
+large white bird [2.633972] Laysan Albatross
+long white legs [1.427308] Laysan Albatross
+wingspan of up to 3 5 feet [1.413840] Laysan Albatross
+long yellow bill [0.401750] Laysan Albatross
+long hooked beak [0.374030] Laysan Albatross
+yellow bill [0.000000] Laysan Albatross
+raucous call [0.000000] Laysan Albatross
+small beak [0.000000] Laysan Albatross
+fast erratic flight patterns [0.000000] Laysan Albatross
+rusty brown feathers [0.000000] Laysan Albatross
+large black bird [1.564616] Sooty Albatross
+glossy black wings [1.309661] Sooty Albatross
+long wingspan [1.146216] Sooty Albatross
+white wingtips [0.803088] Sooty Albatross
+all dark plumage [0.765507] Sooty Albatross
+long slim body [0.059225] Sooty Albatross
+yellow bill [0.000000] Sooty Albatross
+raucous call [0.000000] Sooty Albatross
+small beak [0.000000] Sooty Albatross
+wingspan of up to 3 5 feet [0.000000] Sooty Albatross
+red eye [1.759338] Groove billed Ani
+blue sheen on the wings [0.959826] Groove billed Ani
+orange eyes [0.782662] Groove billed Ani
+black plumage [0.497329] Groove billed Ani
+raucous call [0.000000] Groove billed Ani
+yellow bill [0.000000] Groove billed Ani
+small beak [0.000000] Groove billed Ani
+wingspan of up to 3 5 feet [0.000000] Groove billed Ani
+fast erratic flight patterns [0.000000] Groove billed Ani
+rusty brown feathers [0.000000] Groove billed Ani
+black back and wings [4.427114] Crested Auklet
+dark gray or black upperparts [1.078559] Crested Auklet
+white breast and belly [0.868462] Crested Auklet
+black legs and feet [0.444526] Crested Auklet
+raucous call [0.000000] Crested Auklet
+yellow bill [0.000000] Crested Auklet
+small beak [0.000000] Crested Auklet
+wingspan of up to 3 5 feet [0.000000] Crested Auklet
+fast erratic flight patterns [0.000000] Crested Auklet
+rusty brown feathers [0.000000] Crested Auklet
+black cap and back [2.667539] Least Auklet
+webbed toes [1.848856] Least Auklet
+white face and underparts [1.513059] Least Auklet
+short black bill [1.509179] Least Auklet
+black head and back [0.119361] Least Auklet
+yellow bill [0.000000] Least Auklet
+raucous call [0.000000] Least Auklet
+small beak [0.000000] Least Auklet
+wingspan of up to 3 5 feet [0.000000] Least Auklet
+fast erratic flight patterns [0.000000] Least Auklet
+black head and upperparts [4.356397] Parakeet Auklet
+short stubby beak [3.877040] Parakeet Auklet
+black wings with white spots [0.689403] Parakeet Auklet
+black head and back [0.244673] Parakeet Auklet
+raucous call [0.000000] Parakeet Auklet
+yellow bill [0.000000] Parakeet Auklet
+small beak [0.000000] Parakeet Auklet
+wingspan of up to 3 5 feet [0.000000] Parakeet Auklet
+fast erratic flight patterns [0.000000] Parakeet Auklet
+rusty brown feathers [0.000000] Parakeet Auklet
+large bulbous beak [1.412321] Rhinoceros Auklet
+short thick beak [1.411742] Rhinoceros Auklet
+black head and neck [1.231696] Rhinoceros Auklet
+short wings [0.966990] Rhinoceros Auklet
+black and white color scheme [0.398943] Rhinoceros Auklet
+orange eyes [0.377857] Rhinoceros Auklet
+yellow bill [0.000000] Rhinoceros Auklet
+raucous call [0.000000] Rhinoceros Auklet
+small beak [0.000000] Rhinoceros Auklet
+wingspan of up to 3 5 feet [0.000000] Rhinoceros Auklet
+yellow or orange beak [2.268767] Brewer Blackbird
+black wings [0.816460] Brewer Blackbird
+yellow eye [0.759480] Brewer Blackbird
+black or dark gray body [0.722961] Brewer Blackbird
+raucous call [0.000000] Brewer Blackbird
+yellow bill [0.000000] Brewer Blackbird
+small beak [0.000000] Brewer Blackbird
+wingspan of up to 3 5 feet [0.000000] Brewer Blackbird
+fast erratic flight patterns [0.000000] Brewer Blackbird
+rusty brown feathers [0.000000] Brewer Blackbird
+yellow bar on wing [3.813728] Red winged Blackbird
+red shoulders [3.051715] Red winged Blackbird
+all black body [1.031332] Red winged Blackbird
+long black beak [0.048276] Red winged Blackbird
+raucous call [0.000000] Red winged Blackbird
+yellow bill [0.000000] Red winged Blackbird
+small beak [0.000000] Red winged Blackbird
+wingspan of up to 3 5 feet [0.000000] Red winged Blackbird
+fast erratic flight patterns [0.000000] Red winged Blackbird
+rusty brown feathers [0.000000] Red winged Blackbird
+small blackbird like bird [2.368490] Rusty Blackbird
+rusty brown feathers [0.845732] Rusty Blackbird
+all black plumage [0.389568] Rusty Blackbird
+black legs [0.247255] Rusty Blackbird
+raucous call [0.000000] Rusty Blackbird
+yellow bill [0.000000] Rusty Blackbird
+small beak [0.000000] Rusty Blackbird
+wingspan of up to 3 5 feet [0.000000] Rusty Blackbird
+fast erratic flight patterns [0.000000] Rusty Blackbird
+red head [0.000000] Rusty Blackbird
+yellow head [4.102466] Yellow headed Blackbird
+long black wings [3.555452] Yellow headed Blackbird
+black wings [1.041750] Yellow headed Blackbird
+small beak [0.000000] Yellow headed Blackbird
+yellow bill [0.000000] Yellow headed Blackbird
+raucous call [0.000000] Yellow headed Blackbird
+wingspan of up to 3 5 feet [0.000000] Yellow headed Blackbird
+fast erratic flight patterns [0.000000] Yellow headed Blackbird
+rusty brown feathers [0.000000] Yellow headed Blackbird
+red head [0.000000] Yellow headed Blackbird
+black v on the back [2.328206] Bobolink
+black and white striped head [1.791987] Bobolink
+black head and back [0.940635] Bobolink
+white throat and belly [0.725455] Bobolink
+small round body [0.483064] Bobolink
+black back [0.403881] Bobolink
+small sparrow like bird [0.026270] Bobolink
+yellow bill [0.000000] Bobolink
+raucous call [0.000000] Bobolink
+small beak [0.000000] Bobolink
+thin pointed beak [2.682027] Indigo Bunting
+white streaks on the wings [2.230622] Indigo Bunting
+short beak [1.228401] Indigo Bunting
+blue plumage [0.787925] Indigo Bunting
+small bird [0.742362] Indigo Bunting
+blue body [0.644958] Indigo Bunting
+yellow bill [0.000000] Indigo Bunting
+raucous call [0.000000] Indigo Bunting
+small beak [0.000000] Indigo Bunting
+wingspan of up to 3 5 feet [0.000000] Indigo Bunting
+small blue bird [2.786492] Lazuli Bunting
+thin black bill [2.747179] Lazuli Bunting
+blue wings with white bars [2.194154] Lazuli Bunting
+black collar [1.275257] Lazuli Bunting
+white chest and belly [0.339855] Lazuli Bunting
+black line through the eye [0.310587] Lazuli Bunting
+white wing bar [0.283468] Lazuli Bunting
+yellow bill [0.000000] Lazuli Bunting
+raucous call [0.000000] Lazuli Bunting
+small beak [0.000000] Lazuli Bunting
+short pointed beak [3.500864] Painted Bunting
+blue head [2.679357] Painted Bunting
+green back [1.246504] Painted Bunting
+short stout bill [0.635576] Painted Bunting
+small songbird [0.335175] Painted Bunting
+yellow bill [0.000000] Painted Bunting
+raucous call [0.000000] Painted Bunting
+small beak [0.000000] Painted Bunting
+wingspan of up to 3 5 feet [0.000000] Painted Bunting
+fast erratic flight patterns [0.000000] Painted Bunting
+red feathers [2.499169] Cardinal
+black eyes [1.875595] Cardinal
+red body [1.757819] Cardinal
+black face [1.710078] Cardinal
+red crest on the head [0.683248] Cardinal
+yellow bill [0.000000] Cardinal
+raucous call [0.000000] Cardinal
+small beak [0.000000] Cardinal
+wingspan of up to 3 5 feet [0.000000] Cardinal
+fast erratic flight patterns [0.000000] Cardinal
+gray body with black spots [4.411059] Spotted Catbird
+small rounded body [1.960057] Spotted Catbird
+gray upperparts [0.404306] Spotted Catbird
+small beak [0.000000] Spotted Catbird
+yellow bill [0.000000] Spotted Catbird
+raucous call [0.000000] Spotted Catbird
+wingspan of up to 3 5 feet [0.000000] Spotted Catbird
+fast erratic flight patterns [0.000000] Spotted Catbird
+rusty brown feathers [0.000000] Spotted Catbird
+red head [0.000000] Spotted Catbird
+long flowing tail [2.638730] Gray Catbird
+small mouth [2.161599] Gray Catbird
+gray feathers [0.879130] Gray Catbird
+gray plumage [0.556574] Gray Catbird
+raucous call [0.000000] Gray Catbird
+yellow bill [0.000000] Gray Catbird
+small beak [0.000000] Gray Catbird
+wingspan of up to 3 5 feet [0.000000] Gray Catbird
+fast erratic flight patterns [0.000000] Gray Catbird
+rusty brown feathers [0.000000] Gray Catbird
+black patch on the back [3.362812] Yellow breasted Chat
+black throat [1.692341] Yellow breasted Chat
+black tail [1.307572] Yellow breasted Chat
+black head [0.570597] Yellow breasted Chat
+white throat [0.096730] Yellow breasted Chat
+yellow bill [0.000000] Yellow breasted Chat
+raucous call [0.000000] Yellow breasted Chat
+small beak [0.000000] Yellow breasted Chat
+wingspan of up to 3 5 feet [0.000000] Yellow breasted Chat
+fast erratic flight patterns [0.000000] Yellow breasted Chat

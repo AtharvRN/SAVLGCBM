@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+14,Lazuli Bunting,1,36,blue wings with white bars,2.659270090716226,28
+14,Lazuli Bunting,2,278,thin black bill,2.6023810718740736,28
+14,Lazuli Bunting,3,258,small blue bird,2.5444742143154144,28
+14,Lazuli Bunting,4,308,black collar,1.3994040584989957,28
+14,Lazuli Bunting,5,107,white wing bar,1.0876119786075182,28
+14,Lazuli Bunting,6,33,white chest and belly,0.9800429386751992,28
+14,Lazuli Bunting,7,627,black line through the eye,0.5844784490764141,28
+14,Lazuli Bunting,8,7,yellow bill,0.0,28
+14,Lazuli Bunting,9,3,raucous call,0.0,28
+14,Lazuli Bunting,10,8,small beak,0.0,28

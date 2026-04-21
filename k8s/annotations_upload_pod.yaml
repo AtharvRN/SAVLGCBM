@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: imagenet-annotations-upload
+spec:
+  restartPolicy: Never
+  containers:
+    - name: shell
+      image: ubuntu:22.04
+      command: ["bash", "-lc"]
+      args:
+        - |
+          set -euo pipefail
+          echo "Upload pod ready. Sleeping..."
+          sleep 7d
+      volumeMounts:
+        - name: annotations-src
+          mountPath: /annotations_src
+  volumes:
+    - name: annotations-src
+      persistentVolumeClaim:
+        claimName: imagenet-annotations-pvc
+

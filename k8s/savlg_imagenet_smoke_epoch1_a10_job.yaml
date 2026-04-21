@@ -1,0 +1,100 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: savlg-imagenet-smoke-epoch1-a10
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: savlg-imagenet-smoke-epoch1-a10
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: main
+        image: pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel
+        command: ["bash", "-lc"]
+        args:
+        - |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          export OPENBLAS_NUM_THREADS=1
+          export NUMEXPR_NUM_THREADS=1
+          export PYTHONUNBUFFERED=1
+
+          # Robust image loading (skip tiny/corrupt JPEGs by replacing with a black placeholder).
+          export CBM_MIN_IMAGE_BYTES=1024
+          export CBM_FALLBACK_IMAGE_SIZE=224
+
+          # Point the repo's dataset root vars to the extracted ImageNet train tree on /scratch.
+          export IMAGENET_TRAIN_ROOT=/scratch/imagenet_extract_runs_fresh/20260420_135422/train
+          # For this smoke test we skip test eval; set anyway for safety.
+          export IMAGENET_VAL_ROOT=/scratch/imagenet_extract_runs_fresh/20260420_135422/train
+
+          # Use the GDINO-style cached annotations already on /scratch.
+          export IMAGENET_ANNOTATION_ROOT=/scratch/imagenet_annotations
+
+          source /opt/conda/etc/profile.d/conda.sh || true
+
+          apt-get update || true
+          apt-get install -y --no-install-recommends git curl wget rsync libgl1 libglib2.0-0 || true
+
+          cd /workspace/SAVLGCBM
+
+          LOG_DIR=/scratch/savlgcbm_artifacts/logs
+          mkdir -p "$LOG_DIR"
+          bash scripts/pod_bootstrap_cbm.sh \
+            2>&1 | tee "$LOG_DIR/bootstrap_savlg_imagenet_smoke_epoch1.log"
+
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate cbm
+          export PYTHONPATH=/workspace/SAVLGCBM
+
+          # Smoke: limit data size so we can validate pipeline quickly.
+          python -u train_cbm.py \
+            --config configs/unified/imagenet_savlg_cbm.json \
+            --model_name savlg_cbm \
+            --dataset imagenet \
+            --backbone resnet50 \
+            --annotation_dir "$IMAGENET_ANNOTATION_ROOT" \
+            --activation_dir /scratch/savlgcbm_artifacts/saved_activations \
+            --save_dir /scratch/savlgcbm_artifacts/saved_models_imagenet_smoke \
+            --cbl_epochs 1 \
+            --cbl_batch_size 256 \
+            --saga_n_iters 20 \
+            --saga_batch_size 1024 \
+            --num_workers 8 \
+            --spatial_num_workers 8 \
+            --max_train_images 10000 \
+            --skip_test_eval \
+            2>&1 | tee "$LOG_DIR/imagenet_savlg_smoke_epoch1_train.log"
+        resources:
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "12"
+            memory: 48Gi
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "12"
+            memory: 48Gi
+        volumeMounts:
+        - name: atharv-rwx-storage-1ti
+          mountPath: /workspace
+        - name: atharv-rwo-scratch-2ti
+          mountPath: /scratch
+        - name: dev-shm
+          mountPath: /dev/shm
+      volumes:
+      - name: atharv-rwx-storage-1ti
+        persistentVolumeClaim:
+          claimName: atharv-rwx-storage-1ti
+      - name: atharv-rwo-scratch-2ti
+        persistentVolumeClaim:
+          claimName: atharv-rwo-scratch-2ti
+      - name: dev-shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi

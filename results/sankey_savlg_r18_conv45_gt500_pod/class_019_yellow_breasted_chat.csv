@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+19,Yellow breasted Chat,1,171,black patch on the back,3.3628122289975484,15
+19,Yellow breasted Chat,2,643,black throat,1.692340519403418,15
+19,Yellow breasted Chat,3,38,black tail,1.3075719098250072,15
+19,Yellow breasted Chat,4,25,black head,0.5705970986435811,15
+19,Yellow breasted Chat,5,354,white throat,0.09673025459051132,15
+19,Yellow breasted Chat,6,7,yellow bill,0.0,15
+19,Yellow breasted Chat,7,3,raucous call,0.0,15
+19,Yellow breasted Chat,8,8,small beak,0.0,15
+19,Yellow breasted Chat,9,1,wingspan of up to 3 5 feet,0.0,15
+19,Yellow breasted Chat,10,4,fast erratic flight patterns,0.0,15

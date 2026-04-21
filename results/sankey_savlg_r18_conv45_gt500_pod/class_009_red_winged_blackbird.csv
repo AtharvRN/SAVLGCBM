@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+9,Red winged Blackbird,1,599,yellow bar on wing,3.813727615773678,30
+9,Red winged Blackbird,2,602,red shoulders,3.0517150004704794,30
+9,Red winged Blackbird,3,471,all black body,1.0313322643438976,30
+9,Red winged Blackbird,4,657,long black beak,0.04827574199686448,30
+9,Red winged Blackbird,5,3,raucous call,0.0,30
+9,Red winged Blackbird,6,7,yellow bill,0.0,30
+9,Red winged Blackbird,7,8,small beak,0.0,30
+9,Red winged Blackbird,8,1,wingspan of up to 3 5 feet,0.0,30
+9,Red winged Blackbird,9,4,fast erratic flight patterns,0.0,30
+9,Red winged Blackbird,10,9,rusty brown feathers,0.0,30

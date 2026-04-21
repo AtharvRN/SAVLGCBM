@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+12,Bobolink,1,661,black v on the back,2.795881462097168,30
+12,Bobolink,2,217,black and white striped head,2.577199451625347,30
+12,Bobolink,3,93,white throat and belly,1.1480346123377483,30
+12,Bobolink,4,504,small round body,1.1071277504165968,30
+12,Bobolink,5,207,black head and back,0.854771402478218,30
+12,Bobolink,6,418,black back,0.68253900979956,30
+12,Bobolink,7,204,yellow breast,0.548826598127683,30
+12,Bobolink,8,209,long black tail,0.48771898945172626,30
+12,Bobolink,9,399,small sparrow like bird,0.3441791206598282,30
+12,Bobolink,10,160,white chest,0.1810649144773682,30

@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+16,Cardinal,1,363,red feathers,2.4991694732948586,27
+16,Cardinal,2,636,black eyes,1.875594910648134,27
+16,Cardinal,3,181,red body,1.7578188644515143,27
+16,Cardinal,4,19,black face,1.7100781400998433,27
+16,Cardinal,5,28,red crest on the head,0.68324785762363,27
+16,Cardinal,6,7,yellow bill,0.0,27
+16,Cardinal,7,3,raucous call,0.0,27
+16,Cardinal,8,8,small beak,0.0,27
+16,Cardinal,9,1,wingspan of up to 3 5 feet,0.0,27
+16,Cardinal,10,4,fast erratic flight patterns,0.0,27

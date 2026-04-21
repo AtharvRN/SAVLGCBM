@@ -1,0 +1,84 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: extract-imagenet-train-fresh-par16-job
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: extract-imagenet-train-fresh-par16-job
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: main
+        image: pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel
+        command:
+        - bash
+        - -lc
+        args:
+        - |
+          set -euo pipefail
+
+          SRC_TAR="/scratch/imagenet_downloads/ILSVRC2012_img_train.tar"
+          RUN_ROOT="/scratch/imagenet_extract_runs_fresh"
+          WORKERS="16"
+
+          if [ ! -f "$SRC_TAR" ]; then
+            echo "missing source tar: $SRC_TAR"
+            exit 1
+          fi
+
+          RUN_ID="$(date +%Y%m%d_%H%M%S)"
+          RUN_DIR="$RUN_ROOT/$RUN_ID"
+          TRAIN_DIR="$RUN_DIR/train"
+          LOG_DIR="$RUN_DIR/logs"
+          LOG_FILE="$LOG_DIR/extract_imagenet_train_fresh.log"
+
+          mkdir -p "$TRAIN_DIR" "$LOG_DIR"
+          echo "[$(date)] SRC_TAR=$SRC_TAR" | tee "$LOG_FILE"
+          echo "[$(date)] RUN_DIR=$RUN_DIR" | tee -a "$LOG_FILE"
+          echo "[$(date)] WORKERS=$WORKERS" | tee -a "$LOG_FILE"
+
+          # Hard-link to avoid duplicating a ~150GB tar on Ceph while keeping the original intact.
+          ln "$SRC_TAR" "$TRAIN_DIR/ILSVRC2012_img_train.tar"
+
+          echo "[$(date)] extracting top-level tar (this creates 1000 class .tar files)..." | tee -a "$LOG_FILE"
+          (cd "$TRAIN_DIR" && tar -xf ILSVRC2012_img_train.tar)
+          rm -f "$TRAIN_DIR/ILSVRC2012_img_train.tar"
+
+          echo "[$(date)] top-level class tar count=$(find "$TRAIN_DIR" -maxdepth 1 -type f -name '*.tar' | wc -l)" | tee -a "$LOG_FILE"
+          echo "[$(date)] extracting class sub-tars in parallel..." | tee -a "$LOG_FILE"
+
+          # Parallel per-class extraction (prints 1 line per class, not per-image).
+          find "$TRAIN_DIR" -maxdepth 1 -type f -name '*.tar' -print0 | sort -z | \
+            xargs -0 -n 1 -P "$WORKERS" -I {} bash -lc '
+              set -euo pipefail
+              tar_path="$1"
+              class_id="$(basename "$tar_path" .tar)"
+              class_dir="$(dirname "$tar_path")/$class_id"
+              mkdir -p "$class_dir"
+              tar -xf "$tar_path" -C "$class_dir"
+              rm -f "$tar_path"
+              printf "[%s] extracted %s\n" "$(date)" "$class_id"
+            ' _ {} | tee -a "$LOG_FILE"
+
+          echo "[$(date)] extracted class dirs=$(find "$TRAIN_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)" | tee -a "$LOG_FILE"
+          echo "[$(date)] remaining class tars=$(find "$TRAIN_DIR" -maxdepth 1 -type f -name '*.tar' | wc -l)" | tee -a "$LOG_FILE"
+        resources:
+          requests:
+            cpu: 20
+            memory: 8Gi
+            ephemeral-storage: 2Gi
+          limits:
+            cpu: 20
+            memory: 8Gi
+            ephemeral-storage: 10Gi
+        volumeMounts:
+        - name: atharv-rwo-scratch-2ti
+          mountPath: /scratch
+      volumes:
+      - name: atharv-rwo-scratch-2ti
+        persistentVolumeClaim:
+          claimName: atharv-rwo-scratch-2ti

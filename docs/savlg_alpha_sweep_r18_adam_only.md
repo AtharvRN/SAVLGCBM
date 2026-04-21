@@ -1,0 +1,25 @@
+# SAVLG `resnet18` Alpha Sweep: Adam
+
+Saved data:
+- [results/savlg_alpha_sweep_r18_adam_only.csv](/Users/atharvramesh/Projects/CBM/SAVLGCBM/results/savlg_alpha_sweep_r18_adam_only.csv)
+
+Metrics plotted:
+- `Acc@5`
+- `AVGACC`
+- full test accuracy
+
+| alpha | Full Acc | Acc@5 | AVGACC |
+|---:|---:|---:|---:|
+| 0.0 | 0.7594 | 0.7546 | 0.7556 |
+| 0.05 | 0.7594 | 0.7551 | 0.7560 |
+| 0.1 | 0.7589 | 0.7553 | 0.7566 |
+| 0.2 | 0.7591 | 0.7568 | 0.7570 |
+| 0.4 | 0.7599 | 0.7592 | 0.7602 |
+| 0.6 | 0.7615 | 0.7606 | 0.7613 |
+| 0.8 | 0.7623 | 0.7596 | 0.7607 |
+| 1.0 | 0.7630 | 0.7606 | 0.7613 |
+
+Read:
+- All three metrics improve as `alpha` increases from `0.0` into the `0.4-1.0` region.
+- Full test accuracy peaks at `alpha=1.0`.
+- Sparse metrics peak around `alpha=0.6-1.0`.

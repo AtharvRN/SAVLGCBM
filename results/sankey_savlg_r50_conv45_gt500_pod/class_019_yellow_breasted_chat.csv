@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+19,Yellow breasted Chat,1,171,black patch on the back,3.5331706841786703,15
+19,Yellow breasted Chat,2,38,black tail,1.952844206492106,15
+19,Yellow breasted Chat,3,643,black throat,1.2797832449277242,15
+19,Yellow breasted Chat,4,25,black head,1.2389372448126474,15
+19,Yellow breasted Chat,5,20,orange legs,1.0167558193206787,15
+19,Yellow breasted Chat,6,80,yellow throat and breast,0.5956233749787013,15
+19,Yellow breasted Chat,7,204,yellow breast,0.5546942214171092,15
+19,Yellow breasted Chat,8,354,white throat,0.45048744082450864,15
+19,Yellow breasted Chat,9,443,greenish yellow back and wings,0.34446393251419066,15
+19,Yellow breasted Chat,10,662,olive green back,0.21373547116915384,15

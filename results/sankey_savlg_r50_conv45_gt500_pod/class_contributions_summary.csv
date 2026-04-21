@@ -1,0 +1,201 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+0,Black footed Albatross,1,321,large wingspan,4.148253758748372,30
+0,Black footed Albatross,2,168,black feet,1.799987647930781,30
+0,Black footed Albatross,3,219,long wings,1.6027728041013083,30
+0,Black footed Albatross,4,519,dark wingtips,1.5733184258143107,30
+0,Black footed Albatross,5,313,yellow beak,1.1153813779354096,30
+0,Black footed Albatross,6,91,white body,0.44652102291584017,30
+0,Black footed Albatross,7,7,yellow bill,0.34349290827910106,30
+0,Black footed Albatross,8,495,large size,0.06114336848258972,30
+0,Black footed Albatross,9,48,small sparrow like body,0.01153249959461391,30
+0,Black footed Albatross,10,197,streaked chest,0.01120098902999113,30
+1,Laysan Albatross,1,553,large white bird,3.6093365947405496,30
+1,Laysan Albatross,2,1,wingspan of up to 3 5 feet,3.0206222931543985,30
+1,Laysan Albatross,3,222,long white legs,2.3890241543451944,30
+1,Laysan Albatross,4,196,long hooked beak,1.8396212796370188,30
+1,Laysan Albatross,5,215,long yellow bill,0.6400827457507451,30
+1,Laysan Albatross,6,91,white body,0.38242320766051613,30
+1,Laysan Albatross,7,7,yellow bill,0.0,30
+1,Laysan Albatross,8,3,raucous call,0.0,30
+1,Laysan Albatross,9,8,small beak,0.0,30
+1,Laysan Albatross,10,4,fast erratic flight patterns,0.0,30
+2,Sooty Albatross,1,349,large black bird,2.770220254148756,28
+2,Sooty Albatross,2,538,glossy black wings,2.548460296222142,28
+2,Sooty Albatross,3,395,white wingtips,2.4263208338192532,28
+2,Sooty Albatross,4,404,long wingspan,2.15649020246097,28
+2,Sooty Albatross,5,330,all dark plumage,1.4366429511989867,28
+2,Sooty Albatross,6,104,long slim body,0.7306490370205471,28
+2,Sooty Albatross,7,7,yellow bill,0.0,28
+2,Sooty Albatross,8,3,raucous call,0.0,28
+2,Sooty Albatross,9,8,small beak,0.0,28
+2,Sooty Albatross,10,1,wingspan of up to 3 5 feet,0.0,28
+3,Groove billed Ani,1,41,red eye,5.015980855623881,30
+3,Groove billed Ani,2,198,blue sheen on the wings,3.429676723480225,30
+3,Groove billed Ani,3,530,orange eyes,2.7775965372721356,30
+3,Groove billed Ani,4,29,black plumage,1.1890364329020182,30
+3,Groove billed Ani,5,569,long curved beak,0.24924929464856785,30
+3,Groove billed Ani,6,374,tail with white bars,0.05581332494815191,30
+3,Groove billed Ani,7,482,large stocky bird,0.023688502764950197,30
+3,Groove billed Ani,8,609,grayish brown plumage,0.0024734935349745987,30
+3,Groove billed Ani,9,7,yellow bill,0.0,30
+3,Groove billed Ani,10,3,raucous call,0.0,30
+4,Crested Auklet,1,654,black back and wings,5.541449836322239,14
+4,Crested Auklet,2,375,dark gray or black upperparts,2.3897279500961304,14
+4,Crested Auklet,3,175,black legs and feet,1.4301980776446206,14
+4,Crested Auklet,4,568,white breast and belly,0.4733244457415172,14
+4,Crested Auklet,5,410,black or dark gray plumage,0.1503491848707199,14
+4,Crested Auklet,6,320,black bill,0.09594082220324449,14
+4,Crested Auklet,7,209,long black tail,0.0572346013837627,14
+4,Crested Auklet,8,648,blue gray back,0.051805326116404364,14
+4,Crested Auklet,9,449,blue back,0.03433485867987786,14
+4,Crested Auklet,10,276,yellowish stripes on the wings,0.03298539535275528,14
+5,Least Auklet,1,212,black cap and back,3.805930592797019,11
+5,Least Auklet,2,2,white face and underparts,2.365430311723189,11
+5,Least Auklet,3,118,webbed toes,2.1558228080922905,11
+5,Least Auklet,4,254,short black bill,1.90912757136605,11
+5,Least Auklet,5,207,black head and back,1.3594344420866533,11
+5,Least Auklet,6,175,black legs and feet,0.2869207561016083,11
+5,Least Auklet,7,7,yellow bill,0.0,11
+5,Least Auklet,8,3,raucous call,0.0,11
+5,Least Auklet,9,8,small beak,0.0,11
+5,Least Auklet,10,1,wingspan of up to 3 5 feet,0.0,11
+6,Parakeet Auklet,1,470,short stubby beak,5.025894849196725,23
+6,Parakeet Auklet,2,68,black head and upperparts,4.668076453001603,23
+6,Parakeet Auklet,3,493,black wings with white spots,1.218902764113053,23
+6,Parakeet Auklet,4,48,small sparrow like body,0.9141791540643444,23
+6,Parakeet Auklet,5,207,black head and back,0.7264582786871039,23
+6,Parakeet Auklet,6,7,yellow bill,0.0,23
+6,Parakeet Auklet,7,3,raucous call,0.0,23
+6,Parakeet Auklet,8,8,small beak,0.0,23
+6,Parakeet Auklet,9,1,wingspan of up to 3 5 feet,0.0,23
+6,Parakeet Auklet,10,4,fast erratic flight patterns,0.0,23
+7,Rhinoceros Auklet,1,496,short thick beak,2.780163483487235,18
+7,Rhinoceros Auklet,2,575,large bulbous beak,2.7794665098190308,18
+7,Rhinoceros Auklet,3,100,short wings,2.002308987908893,18
+7,Rhinoceros Auklet,4,490,black head and neck,1.8379856944084167,18
+7,Rhinoceros Auklet,5,530,orange eyes,0.9916829417149226,18
+7,Rhinoceros Auklet,6,30,black and white color scheme,0.9118152956167856,18
+7,Rhinoceros Auklet,7,270,white plumage,0.28183418033748037,18
+7,Rhinoceros Auklet,8,44,large stocky body,0.20149449714356,18
+7,Rhinoceros Auklet,9,7,yellow bill,0.0,18
+7,Rhinoceros Auklet,10,3,raucous call,0.0,18
+8,Brewer Blackbird,1,381,yellow or orange beak,4.2508543985230585,28
+8,Brewer Blackbird,2,451,yellow eye,2.802821491445814,28
+8,Brewer Blackbird,3,61,black wings,2.143738995705332,28
+8,Brewer Blackbird,4,26,black beak,0.3979542760976723,28
+8,Brewer Blackbird,5,294,black body,0.3603895620575973,28
+8,Brewer Blackbird,6,622,white wing bars,0.2515661358068298,28
+8,Brewer Blackbird,7,57,grayish wings,0.058517156434910636,28
+8,Brewer Blackbird,8,329,long pointed bill,0.05296139814890921,28
+8,Brewer Blackbird,9,114,white breast,0.04281259449531457,28
+8,Brewer Blackbird,10,325,black and white barred tail,0.03019862377550453,28
+9,Red winged Blackbird,1,599,yellow bar on wing,4.777010989189148,30
+9,Red winged Blackbird,2,602,red shoulders,4.431848843892415,30
+9,Red winged Blackbird,3,471,all black body,1.2859888792037963,30
+9,Red winged Blackbird,4,657,long black beak,0.5184346228837967,30
+9,Red winged Blackbird,5,435,webbed feet,0.2979781498511632,30
+9,Red winged Blackbird,6,209,long black tail,0.11095823037127654,30
+9,Red winged Blackbird,7,586,long legs,0.10168682759006818,30
+9,Red winged Blackbird,8,7,yellow bill,0.0,30
+9,Red winged Blackbird,9,3,raucous call,0.0,30
+9,Red winged Blackbird,10,8,small beak,0.0,30
+10,Rusty Blackbird,1,285,small blackbird like bird,5.087626584370931,30
+10,Rusty Blackbird,2,9,rusty brown feathers,1.9820829391479493,30
+10,Rusty Blackbird,3,589,all black plumage,1.5635147094726562,30
+10,Rusty Blackbird,4,343,black legs,0.8739540102581184,30
+10,Rusty Blackbird,5,381,yellow or orange beak,0.09725000963856777,30
+10,Rusty Blackbird,6,209,long black tail,0.08736242937544982,30
+10,Rusty Blackbird,7,449,blue back,0.07888025611367387,30
+10,Rusty Blackbird,8,586,long legs,0.04796444463233153,30
+10,Rusty Blackbird,9,466,white underwings,0.04376574244039754,30
+10,Rusty Blackbird,10,583,blue and white plumage,0.03321751632417242,30
+11,Yellow headed Blackbird,1,446,yellow head,4.334837840153621,26
+11,Yellow headed Blackbird,2,508,long black wings,2.612172713646522,26
+11,Yellow headed Blackbird,3,61,black wings,1.303426864055487,26
+11,Yellow headed Blackbird,4,343,black legs,1.0668867986935835,26
+11,Yellow headed Blackbird,5,657,long black beak,0.5293291532076322,26
+11,Yellow headed Blackbird,6,294,black body,0.5009022114368585,26
+11,Yellow headed Blackbird,7,26,black beak,0.46479516934890014,26
+11,Yellow headed Blackbird,8,7,yellow bill,0.0,26
+11,Yellow headed Blackbird,9,3,raucous call,0.0,26
+11,Yellow headed Blackbird,10,8,small beak,0.0,26
+12,Bobolink,1,661,black v on the back,2.795881462097168,30
+12,Bobolink,2,217,black and white striped head,2.577199451625347,30
+12,Bobolink,3,93,white throat and belly,1.1480346123377483,30
+12,Bobolink,4,504,small round body,1.1071277504165968,30
+12,Bobolink,5,207,black head and back,0.854771402478218,30
+12,Bobolink,6,418,black back,0.68253900979956,30
+12,Bobolink,7,204,yellow breast,0.548826598127683,30
+12,Bobolink,8,209,long black tail,0.48771898945172626,30
+12,Bobolink,9,399,small sparrow like bird,0.3441791206598282,30
+12,Bobolink,10,160,white chest,0.1810649144773682,30
+13,Indigo Bunting,1,192,thin pointed beak,4.877565844853719,30
+13,Indigo Bunting,2,474,white streaks on the wings,3.446690837542216,30
+13,Indigo Bunting,3,659,short beak,2.283678877353668,30
+13,Indigo Bunting,4,299,small bird,0.94390061100324,30
+13,Indigo Bunting,5,27,black mask around the eyes,0.683764691154162,30
+13,Indigo Bunting,6,612,blue plumage,0.5319515516360601,30
+13,Indigo Bunting,7,667,blue body,0.03857198444505532,30
+13,Indigo Bunting,8,7,yellow bill,0.0,30
+13,Indigo Bunting,9,3,raucous call,0.0,30
+13,Indigo Bunting,10,8,small beak,0.0,30
+14,Lazuli Bunting,1,36,blue wings with white bars,2.659270090716226,28
+14,Lazuli Bunting,2,278,thin black bill,2.6023810718740736,28
+14,Lazuli Bunting,3,258,small blue bird,2.5444742143154144,28
+14,Lazuli Bunting,4,308,black collar,1.3994040584989957,28
+14,Lazuli Bunting,5,107,white wing bar,1.0876119786075182,28
+14,Lazuli Bunting,6,33,white chest and belly,0.9800429386751992,28
+14,Lazuli Bunting,7,627,black line through the eye,0.5844784490764141,28
+14,Lazuli Bunting,8,7,yellow bill,0.0,28
+14,Lazuli Bunting,9,3,raucous call,0.0,28
+14,Lazuli Bunting,10,8,small beak,0.0,28
+15,Painted Bunting,1,92,short pointed beak,4.2528711174215585,28
+15,Painted Bunting,2,600,blue head,4.183445538793292,28
+15,Painted Bunting,3,251,green back,2.1892900530781065,28
+15,Painted Bunting,4,53,short stout bill,1.0997638627886772,28
+15,Painted Bunting,5,34,small songbird,0.4239103759505919,28
+15,Painted Bunting,6,7,yellow bill,0.0,28
+15,Painted Bunting,7,3,raucous call,0.0,28
+15,Painted Bunting,8,8,small beak,0.0,28
+15,Painted Bunting,9,1,wingspan of up to 3 5 feet,0.0,28
+15,Painted Bunting,10,4,fast erratic flight patterns,0.0,28
+16,Cardinal,1,363,red feathers,3.3909650996879295,27
+16,Cardinal,2,636,black eyes,3.0297449827194214,27
+16,Cardinal,3,181,red body,2.262219689510487,27
+16,Cardinal,4,19,black face,2.039276436523155,27
+16,Cardinal,5,28,red crest on the head,1.8630351954036288,27
+16,Cardinal,6,26,black beak,0.2718140251106686,27
+16,Cardinal,7,7,yellow bill,0.0,27
+16,Cardinal,8,3,raucous call,0.0,27
+16,Cardinal,9,8,small beak,0.0,27
+16,Cardinal,10,1,wingspan of up to 3 5 feet,0.0,27
+17,Spotted Catbird,1,503,gray body with black spots,5.582880544662475,15
+17,Spotted Catbird,2,317,small rounded body,3.830033564567566,15
+17,Spotted Catbird,3,431,gray upperparts,1.2509695847829183,15
+17,Spotted Catbird,4,21,black wings with white stripes,0.13179412285486858,15
+17,Spotted Catbird,5,531,iridescent green plumage,0.11053821568687756,15
+17,Spotted Catbird,6,305,bright green back,0.07455191686749459,15
+17,Spotted Catbird,7,69,long tail,0.0466398594280084,15
+17,Spotted Catbird,8,101,large black spider,0.026769907772541048,15
+17,Spotted Catbird,9,77,black streaks on the wings,0.002298615829204209,15
+17,Spotted Catbird,10,7,yellow bill,0.0,15
+18,Gray Catbird,1,88,small mouth,4.345724031842988,29
+18,Gray Catbird,2,499,long flowing tail,3.3640462530070336,29
+18,Gray Catbird,3,383,gray feathers,1.7224016682855015,29
+18,Gray Catbird,4,206,black cap,0.9881956787972614,29
+18,Gray Catbird,5,85,gray plumage,0.5962883460110632,29
+18,Gray Catbird,6,504,small round body,0.10246948987759393,29
+18,Gray Catbird,7,141,yellow eyes,0.08554585547796612,29
+18,Gray Catbird,8,7,yellow bill,0.0,29
+18,Gray Catbird,9,3,raucous call,0.0,29
+18,Gray Catbird,10,8,small beak,0.0,29
+19,Yellow breasted Chat,1,171,black patch on the back,3.5331706841786703,15
+19,Yellow breasted Chat,2,38,black tail,1.952844206492106,15
+19,Yellow breasted Chat,3,643,black throat,1.2797832449277242,15
+19,Yellow breasted Chat,4,25,black head,1.2389372448126474,15
+19,Yellow breasted Chat,5,20,orange legs,1.0167558193206787,15
+19,Yellow breasted Chat,6,80,yellow throat and breast,0.5956233749787013,15
+19,Yellow breasted Chat,7,204,yellow breast,0.5546942214171092,15
+19,Yellow breasted Chat,8,354,white throat,0.45048744082450864,15
+19,Yellow breasted Chat,9,443,greenish yellow back and wings,0.34446393251419066,15
+19,Yellow breasted Chat,10,662,olive green back,0.21373547116915384,15

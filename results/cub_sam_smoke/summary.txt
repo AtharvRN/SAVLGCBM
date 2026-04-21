@@ -1,0 +1,3 @@
+0	001.Black_footed_Albatross/Black_Footed_Albatross_0046_18.jpg	0.3197850746268657	6	/Users/atharvramesh/Projects/CBM/SAVLGCBM/results/cub_sam_smoke/0000_Black_Footed_Albatross_0046_18_sam_smoke.png
+386	008.Rhinoceros_Auklet/Rhinoceros_Auklet_0040_797503.jpg	0.15634271099744246	10	/Users/atharvramesh/Projects/CBM/SAVLGCBM/results/cub_sam_smoke/0386_Rhinoceros_Auklet_0040_797503_sam_smoke.png
+1448	026.Bronzed_Cowbird/Bronzed_Cowbird_0081_24198.jpg	0.0512	14	/Users/atharvramesh/Projects/CBM/SAVLGCBM/results/cub_sam_smoke/1448_Bronzed_Cowbird_0081_24198_sam_smoke.png

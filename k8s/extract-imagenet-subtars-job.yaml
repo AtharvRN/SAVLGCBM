@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: extract-imagenet-subtars-job
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: extract-imagenet-subtars-job
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: main
+        image: pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel
+        command:
+        - bash
+        - -lc
+        args:
+        - |
+          set -euxo pipefail
+
+          RUN_ROOT=/scratch/imagenet_extract_runs
+          WORKERS=22
+
+          RUN_DIR="$(find "$RUN_ROOT" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
+          if [ -z "${RUN_DIR:-}" ]; then
+            echo "no extraction run directory found under $RUN_ROOT"
+            exit 1
+          fi
+
+          STAGE_DIR="$RUN_DIR/stage_tars"
+          OUT_DIR="$RUN_DIR/train_extracted"
+          LOG_DIR="$RUN_DIR/logs"
+          LOG_FILE="$LOG_DIR/extract_imagenet_subtars.log"
+
+          if [ ! -d "$STAGE_DIR" ]; then
+            echo "missing stage dir: $STAGE_DIR"
+            exit 1
+          fi
+
+          mkdir -p "$OUT_DIR" "$LOG_DIR"
+
+          echo "[$(date)] using RUN_DIR=$RUN_DIR" | tee "$LOG_FILE"
+          echo "[$(date)] existing extracted class dirs=$(find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)" | tee -a "$LOG_FILE"
+          echo "[$(date)] stage tar count=$(find "$STAGE_DIR" -maxdepth 1 -type f -name '*.tar' | wc -l)" | tee -a "$LOG_FILE"
+          echo "[$(date)] extracting with WORKERS=$WORKERS" | tee -a "$LOG_FILE"
+
+          find "$STAGE_DIR" -maxdepth 1 -type f -name '*.tar' -print0 | sort -z | \
+            xargs -0 -n 1 -P "$WORKERS" -I {} bash -lc '
+              set -euo pipefail
+              tar_path="$1"
+              out_dir="$2"
+              class_id="$(basename "$tar_path" .tar)"
+              class_dir="$out_dir/$class_id"
+              if [ -d "$class_dir" ] && [ "$(find "$class_dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)" -gt 0 ]; then
+                rm -f "$tar_path"
+                printf "[%s] skipped %s (already extracted)\n" "$(date)" "$class_id"
+                exit 0
+              fi
+              mkdir -p "$class_dir"
+              tar -xf "$tar_path" -C "$class_dir"
+              rm -f "$tar_path"
+              printf "[%s] extracted %s\n" "$(date)" "$class_id"
+            ' _ {} "$OUT_DIR" | tee -a "$LOG_FILE"
+
+          echo "[$(date)] extracted class dirs=$(find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)" | tee -a "$LOG_FILE"
+          echo "[$(date)] remaining class tars=$(find "$STAGE_DIR" -maxdepth 1 -type f -name '*.tar' | wc -l)" | tee -a "$LOG_FILE"
+        resources:
+          requests:
+            cpu: 44
+            memory: 64Gi
+            ephemeral-storage: 50Gi
+          limits:
+            cpu: 44
+            memory: 64Gi
+            ephemeral-storage: 100Gi
+        volumeMounts:
+        - name: atharv-rwo-scratch-2ti
+          mountPath: /scratch
+      volumes:
+      - name: atharv-rwo-scratch-2ti
+        persistentVolumeClaim:
+          claimName: atharv-rwo-scratch-2ti

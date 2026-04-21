@@ -14,3 +14,13 @@ wandb/
 output/
 docs/*.aux
 docs/*.log
+
+# Local experiment artifacts / scratch
+_loc_results/
+_loc_results_maskgt/
+check.ipynb
+test.ipynb
+test.py
+
+# Accidental quoted-path folder (created by a bad copy/paste)
+''/

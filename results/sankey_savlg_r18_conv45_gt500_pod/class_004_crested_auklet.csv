@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+4,Crested Auklet,1,654,black back and wings,4.4271144441195895,14
+4,Crested Auklet,2,375,dark gray or black upperparts,1.0785594694316387,14
+4,Crested Auklet,3,568,white breast and belly,0.8684621820492404,14
+4,Crested Auklet,4,175,black legs and feet,0.44452634267508984,14
+4,Crested Auklet,5,3,raucous call,0.0,14
+4,Crested Auklet,6,7,yellow bill,0.0,14
+4,Crested Auklet,7,8,small beak,0.0,14
+4,Crested Auklet,8,1,wingspan of up to 3 5 feet,0.0,14
+4,Crested Auklet,9,4,fast erratic flight patterns,0.0,14
+4,Crested Auklet,10,9,rusty brown feathers,0.0,14

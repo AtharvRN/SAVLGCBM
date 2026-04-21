@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+1,Laysan Albatross,1,553,large white bird,3.6093365947405496,30
+1,Laysan Albatross,2,1,wingspan of up to 3 5 feet,3.0206222931543985,30
+1,Laysan Albatross,3,222,long white legs,2.3890241543451944,30
+1,Laysan Albatross,4,196,long hooked beak,1.8396212796370188,30
+1,Laysan Albatross,5,215,long yellow bill,0.6400827457507451,30
+1,Laysan Albatross,6,91,white body,0.38242320766051613,30
+1,Laysan Albatross,7,7,yellow bill,0.0,30
+1,Laysan Albatross,8,3,raucous call,0.0,30
+1,Laysan Albatross,9,8,small beak,0.0,30
+1,Laysan Albatross,10,4,fast erratic flight patterns,0.0,30

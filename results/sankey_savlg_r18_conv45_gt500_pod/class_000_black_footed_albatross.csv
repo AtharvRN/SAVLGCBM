@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+0,Black footed Albatross,1,321,large wingspan,2.8042486389478047,30
+0,Black footed Albatross,2,519,dark wingtips,1.4742415050665538,30
+0,Black footed Albatross,3,219,long wings,1.399387208620707,30
+0,Black footed Albatross,4,168,black feet,0.8162751530607542,30
+0,Black footed Albatross,5,495,large size,0.3117232546210289,30
+0,Black footed Albatross,6,313,yellow beak,0.017519241493816177,30
+0,Black footed Albatross,7,7,yellow bill,0.0,30
+0,Black footed Albatross,8,3,raucous call,0.0,30
+0,Black footed Albatross,9,8,small beak,0.0,30
+0,Black footed Albatross,10,1,wingspan of up to 3 5 feet,0.0,30

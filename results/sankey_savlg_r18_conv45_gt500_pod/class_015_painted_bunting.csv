@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+15,Painted Bunting,1,92,short pointed beak,3.5008640715054105,28
+15,Painted Bunting,2,600,blue head,2.679356873035431,28
+15,Painted Bunting,3,251,green back,1.2465036266616412,28
+15,Painted Bunting,4,53,short stout bill,0.6355760137417487,28
+15,Painted Bunting,5,34,small songbird,0.33517465367913246,28
+15,Painted Bunting,6,7,yellow bill,0.0,28
+15,Painted Bunting,7,3,raucous call,0.0,28
+15,Painted Bunting,8,8,small beak,0.0,28
+15,Painted Bunting,9,1,wingspan of up to 3 5 feet,0.0,28
+15,Painted Bunting,10,4,fast erratic flight patterns,0.0,28

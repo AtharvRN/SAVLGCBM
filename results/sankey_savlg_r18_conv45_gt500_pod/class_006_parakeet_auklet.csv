@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+6,Parakeet Auklet,1,68,black head and upperparts,4.356397012005681,23
+6,Parakeet Auklet,2,470,short stubby beak,3.8770403188207876,23
+6,Parakeet Auklet,3,493,black wings with white spots,0.6894033821704595,23
+6,Parakeet Auklet,4,207,black head and back,0.24467317857172177,23
+6,Parakeet Auklet,5,3,raucous call,0.0,23
+6,Parakeet Auklet,6,7,yellow bill,0.0,23
+6,Parakeet Auklet,7,8,small beak,0.0,23
+6,Parakeet Auklet,8,1,wingspan of up to 3 5 feet,0.0,23
+6,Parakeet Auklet,9,4,fast erratic flight patterns,0.0,23
+6,Parakeet Auklet,10,9,rusty brown feathers,0.0,23

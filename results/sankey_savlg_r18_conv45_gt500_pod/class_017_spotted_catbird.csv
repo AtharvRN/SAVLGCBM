@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+17,Spotted Catbird,1,503,gray body with black spots,4.411059153079987,15
+17,Spotted Catbird,2,317,small rounded body,1.9600570013125738,15
+17,Spotted Catbird,3,431,gray upperparts,0.40430597892651954,15
+17,Spotted Catbird,4,8,small beak,0.0,15
+17,Spotted Catbird,5,7,yellow bill,0.0,15
+17,Spotted Catbird,6,3,raucous call,0.0,15
+17,Spotted Catbird,7,1,wingspan of up to 3 5 feet,0.0,15
+17,Spotted Catbird,8,4,fast erratic flight patterns,0.0,15
+17,Spotted Catbird,9,9,rusty brown feathers,0.0,15
+17,Spotted Catbird,10,5,red head,0.0,15

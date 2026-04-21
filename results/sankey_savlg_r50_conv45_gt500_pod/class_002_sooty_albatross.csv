@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+2,Sooty Albatross,1,349,large black bird,2.770220254148756,28
+2,Sooty Albatross,2,538,glossy black wings,2.548460296222142,28
+2,Sooty Albatross,3,395,white wingtips,2.4263208338192532,28
+2,Sooty Albatross,4,404,long wingspan,2.15649020246097,28
+2,Sooty Albatross,5,330,all dark plumage,1.4366429511989867,28
+2,Sooty Albatross,6,104,long slim body,0.7306490370205471,28
+2,Sooty Albatross,7,7,yellow bill,0.0,28
+2,Sooty Albatross,8,3,raucous call,0.0,28
+2,Sooty Albatross,9,8,small beak,0.0,28
+2,Sooty Albatross,10,1,wingspan of up to 3 5 feet,0.0,28

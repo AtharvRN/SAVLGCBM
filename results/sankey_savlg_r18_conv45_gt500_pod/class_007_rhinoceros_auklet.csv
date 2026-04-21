@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+7,Rhinoceros Auklet,1,575,large bulbous beak,1.4123209532764223,18
+7,Rhinoceros Auklet,2,496,short thick beak,1.4117418378591537,18
+7,Rhinoceros Auklet,3,490,black head and neck,1.231695891254478,18
+7,Rhinoceros Auklet,4,100,short wings,0.9669897506634394,18
+7,Rhinoceros Auklet,5,30,black and white color scheme,0.39894294407632613,18
+7,Rhinoceros Auklet,6,530,orange eyes,0.37785737009512055,18
+7,Rhinoceros Auklet,7,7,yellow bill,0.0,18
+7,Rhinoceros Auklet,8,3,raucous call,0.0,18
+7,Rhinoceros Auklet,9,8,small beak,0.0,18
+7,Rhinoceros Auklet,10,1,wingspan of up to 3 5 feet,0.0,18

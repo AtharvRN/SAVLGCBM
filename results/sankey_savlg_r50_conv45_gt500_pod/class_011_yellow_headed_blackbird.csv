@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+11,Yellow headed Blackbird,1,446,yellow head,4.334837840153621,26
+11,Yellow headed Blackbird,2,508,long black wings,2.612172713646522,26
+11,Yellow headed Blackbird,3,61,black wings,1.303426864055487,26
+11,Yellow headed Blackbird,4,343,black legs,1.0668867986935835,26
+11,Yellow headed Blackbird,5,657,long black beak,0.5293291532076322,26
+11,Yellow headed Blackbird,6,294,black body,0.5009022114368585,26
+11,Yellow headed Blackbird,7,26,black beak,0.46479516934890014,26
+11,Yellow headed Blackbird,8,7,yellow bill,0.0,26
+11,Yellow headed Blackbird,9,3,raucous call,0.0,26
+11,Yellow headed Blackbird,10,8,small beak,0.0,26

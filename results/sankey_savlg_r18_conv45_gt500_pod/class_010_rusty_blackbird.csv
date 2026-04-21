@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+10,Rusty Blackbird,1,285,small blackbird like bird,2.3684895237286887,30
+10,Rusty Blackbird,2,9,rusty brown feathers,0.8457322254776954,30
+10,Rusty Blackbird,3,589,all black plumage,0.3895679702361425,30
+10,Rusty Blackbird,4,343,black legs,0.247255122095036,30
+10,Rusty Blackbird,5,3,raucous call,0.0,30
+10,Rusty Blackbird,6,7,yellow bill,0.0,30
+10,Rusty Blackbird,7,8,small beak,0.0,30
+10,Rusty Blackbird,8,1,wingspan of up to 3 5 feet,0.0,30
+10,Rusty Blackbird,9,4,fast erratic flight patterns,0.0,30
+10,Rusty Blackbird,10,5,red head,0.0,30

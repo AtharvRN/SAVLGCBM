@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+3,Groove billed Ani,1,41,red eye,5.015980855623881,30
+3,Groove billed Ani,2,198,blue sheen on the wings,3.429676723480225,30
+3,Groove billed Ani,3,530,orange eyes,2.7775965372721356,30
+3,Groove billed Ani,4,29,black plumage,1.1890364329020182,30
+3,Groove billed Ani,5,569,long curved beak,0.24924929464856785,30
+3,Groove billed Ani,6,374,tail with white bars,0.05581332494815191,30
+3,Groove billed Ani,7,482,large stocky bird,0.023688502764950197,30
+3,Groove billed Ani,8,609,grayish brown plumage,0.0024734935349745987,30
+3,Groove billed Ani,9,7,yellow bill,0.0,30
+3,Groove billed Ani,10,3,raucous call,0.0,30

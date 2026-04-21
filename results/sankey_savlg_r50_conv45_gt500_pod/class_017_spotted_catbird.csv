@@ -1,0 +1,11 @@
+class_idx,class_name,rank,concept_idx,concept_name,mean_contribution,num_examples
+17,Spotted Catbird,1,503,gray body with black spots,5.582880544662475,15
+17,Spotted Catbird,2,317,small rounded body,3.830033564567566,15
+17,Spotted Catbird,3,431,gray upperparts,1.2509695847829183,15
+17,Spotted Catbird,4,21,black wings with white stripes,0.13179412285486858,15
+17,Spotted Catbird,5,531,iridescent green plumage,0.11053821568687756,15
+17,Spotted Catbird,6,305,bright green back,0.07455191686749459,15
+17,Spotted Catbird,7,69,long tail,0.0466398594280084,15
+17,Spotted Catbird,8,101,large black spider,0.026769907772541048,15
+17,Spotted Catbird,9,77,black streaks on the wings,0.002298615829204209,15
+17,Spotted Catbird,10,7,yellow bill,0.0,15

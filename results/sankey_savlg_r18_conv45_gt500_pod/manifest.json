@@ -1,0 +1,13 @@
+{
+  "load_path": "/workspace/SAVLGCBM/saved_models/cub/savlg_cbm_cub_2026_04_07_23_45_15-1",
+  "model_name": "savlg_cbm",
+  "num_images": 500,
+  "class_source": "gt",
+  "mode": "positive",
+  "topk_per_class": 10,
+  "savlg_score_source": "final",
+  "summary_csv": "/workspace/SAVLGCBM/results/sankey_savlg_r18_conv45_gt500/class_contributions_summary.csv",
+  "sankey_csv": "/workspace/SAVLGCBM/results/sankey_savlg_r18_conv45_gt500/sankey_links.csv",
+  "sankeymatic_txt": "/workspace/SAVLGCBM/results/sankey_savlg_r18_conv45_gt500/sankeymatic_flows.txt",
+  "sankey_html": "/workspace/SAVLGCBM/results/sankey_savlg_r18_conv45_gt500/sankey.html"
+}
