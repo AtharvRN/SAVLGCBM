@@ -150,6 +150,12 @@ spec:
             # Make the robust loader ignore tiny JPEGs instead of crashing.
             - name: CBM_MIN_IMAGE_BYTES
               value: "2048"
+            # Optional: expected md5 checksums for the uploaded annotation tarballs.
+            # Set these to make the job refuse to extract truncated uploads.
+            - name: ANNOT_TRAIN_MD5
+              value: "c93207b0f3dfa070afc2771099ad7b0a"
+            - name: ANNOT_VAL_MD5
+              value: "3c91c33f32146518d29450e279e2c2b6"
           args:
             - |
               set -euo pipefail
@@ -177,6 +183,42 @@ spec:
                 echo "Timed out waiting for annotation tarballs in /data/incoming." >&2
                 echo "Upload them with kubectl cp and re-run the job." >&2
                 exit 4
+              fi
+
+              # Wait until uploads are complete (size stable) before extracting.
+              wait_stable() {
+                local f="$1"
+                local prev=""
+                for _ in $(seq 1 120); do
+                  local cur
+                  cur="$(stat -c '%s' "$f" 2>/dev/null || stat -f '%z' "$f")"
+                  if [[ -n "$prev" && "$cur" == "$prev" ]]; then
+                    return 0
+                  fi
+                  prev="$cur"
+                  sleep 5
+                done
+                echo "File did not become size-stable: $f" >&2
+                return 1
+              }
+
+              echo "[train] verifying annotation tarballs are fully uploaded"
+              wait_stable /data/incoming/imagenet_train.tar.gz
+              wait_stable /data/incoming/imagenet_val.tar.gz
+
+              if [[ -n "${ANNOT_TRAIN_MD5:-}" ]]; then
+                got="$(md5sum /data/incoming/imagenet_train.tar.gz | awk '{print $1}')"
+                if [[ "$got" != "$ANNOT_TRAIN_MD5" ]]; then
+                  echo "MD5 mismatch for imagenet_train.tar.gz: got=$got expected=$ANNOT_TRAIN_MD5" >&2
+                  exit 5
+                fi
+              fi
+              if [[ -n "${ANNOT_VAL_MD5:-}" ]]; then
+                got="$(md5sum /data/incoming/imagenet_val.tar.gz | awk '{print $1}')"
+                if [[ "$got" != "$ANNOT_VAL_MD5" ]]; then
+                  echo "MD5 mismatch for imagenet_val.tar.gz: got=$got expected=$ANNOT_VAL_MD5" >&2
+                  exit 5
+                fi
               fi
 
               mkdir -p /data/root/imagenet_annotations
