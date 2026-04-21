@@ -33,6 +33,13 @@ spec:
             sizeLimit: 500Gi
         - name: work
           emptyDir: {}
+        # Persistent source for annotation tarballs (small, compressed).
+        # Put these files in the PVC root (one-time):
+        #   imagenet_train.tar.gz
+        #   imagenet_val.tar.gz
+        - name: annotations-src
+          persistentVolumeClaim:
+            claimName: imagenet-annotations-pvc
         # Optional: mount Kaggle token as a secret at /secrets/kaggle.json
         # Create it with:
         #   kubectl -n <ns> create secret generic kaggle-json --from-file=kaggle.json=$HOME/.kaggle/kaggle.json
@@ -122,12 +129,22 @@ spec:
               mkdir -p /data/root/imagenet_annotations
               chmod 777 /data/root/imagenet_annotations
 
+              echo "[stage-data] staging annotation tarballs from PVC to NVMe (/data/incoming)"
+              if [[ ! -f /annotations_src/imagenet_train.tar.gz || ! -f /annotations_src/imagenet_val.tar.gz ]]; then
+                echo "Missing /annotations_src/imagenet_{train,val}.tar.gz in PVC imagenet-annotations-pvc" >&2
+                exit 10
+              fi
+              cp -f /annotations_src/imagenet_train.tar.gz /data/incoming/imagenet_train.tar.gz
+              cp -f /annotations_src/imagenet_val.tar.gz /data/incoming/imagenet_val.tar.gz
+
               echo "[stage-data] done (waiting for annotation tarballs happens in the main container)"
           volumeMounts:
             - name: data
               mountPath: /data
             - name: kaggle-json
               mountPath: /secrets
+            - name: annotations-src
+              mountPath: /annotations_src
           resources:
             requests:
               cpu: "4"
@@ -167,45 +184,7 @@ spec:
               source /opt/conda/etc/profile.d/conda.sh
               conda activate cbm
 
-              # Expect annotation tarballs to be uploaded into ephemeral storage:
-              #   kubectl -n <ns> cp ~/Downloads/imagenet_train.tar.gz <pod>:/data/incoming/imagenet_train.tar.gz
-              #   kubectl -n <ns> cp ~/Downloads/imagenet_val.tar.gz   <pod>:/data/incoming/imagenet_val.tar.gz
-              #
-              # This avoids relying on SharePoint links or a PVC; extraction is done onto NVMe (emptyDir).
-              echo "[train] waiting for /data/incoming/imagenet_{train,val}.tar.gz ..."
-              for _ in $(seq 1 720); do
-                if [[ -f /data/incoming/imagenet_train.tar.gz && -f /data/incoming/imagenet_val.tar.gz ]]; then
-                  break
-                fi
-                sleep 10
-              done
-              if [[ ! -f /data/incoming/imagenet_train.tar.gz || ! -f /data/incoming/imagenet_val.tar.gz ]]; then
-                echo "Timed out waiting for annotation tarballs in /data/incoming." >&2
-                echo "Upload them with kubectl cp and re-run the job." >&2
-                exit 4
-              fi
-
-              # Wait until uploads are complete (size stable) before extracting.
-              wait_stable() {
-                local f="$1"
-                local prev=""
-                for _ in $(seq 1 120); do
-                  local cur
-                  cur="$(stat -c '%s' "$f" 2>/dev/null || stat -f '%z' "$f")"
-                  if [[ -n "$prev" && "$cur" == "$prev" ]]; then
-                    return 0
-                  fi
-                  prev="$cur"
-                  sleep 5
-                done
-                echo "File did not become size-stable: $f" >&2
-                return 1
-              }
-
-              echo "[train] verifying annotation tarballs are fully uploaded"
-              wait_stable /data/incoming/imagenet_train.tar.gz
-              wait_stable /data/incoming/imagenet_val.tar.gz
-
+              echo "[train] verifying staged annotation tarballs"
               if [[ -n "${ANNOT_TRAIN_MD5:-}" ]]; then
                 got="$(md5sum /data/incoming/imagenet_train.tar.gz | awk '{print $1}')"
                 if [[ "$got" != "$ANNOT_TRAIN_MD5" ]]; then
