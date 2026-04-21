@@ -19,6 +19,17 @@ spec:
             sizeLimit: 500Gi
         - name: work
           emptyDir: {}
+        # Optional: persistent place to store annotation tarballs.
+        # Create a PVC and name it here, then put:
+        #   imagenet_train.tar.gz
+        #   imagenet_val.tar.gz
+        # into the PVC root.
+        #
+        # If these files exist, the job will use them instead of downloading.
+        - name: annotations-src
+          persistentVolumeClaim:
+            claimName: imagenet-annotations-pvc
+            optional: true
         # Optional: mount Kaggle token as a secret at /secrets/kaggle.json
         # Create it with:
         #   kubectl -n <ns> create secret generic kaggle-json --from-file=kaggle.json=$HOME/.kaggle/kaggle.json
@@ -98,15 +109,22 @@ spec:
               ln -sfn "${DATA_BASE}/val" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/ImageNet_val
 
               echo "[stage-data] downloading annotation tarballs"
-              if [[ -z "${ANNOT_TRAIN_URL:-}" || -z "${ANNOT_VAL_URL:-}" ]]; then
-                echo "Set ANNOT_TRAIN_URL and ANNOT_VAL_URL to public direct-download links for imagenet_{train,val}.tar.gz" >&2
-                exit 2
-              fi
               mkdir -p /data/root/imagenet_annotations
-              curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
-                -o /data/root/imagenet_train.tar.gz "$ANNOT_TRAIN_URL"
-              curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
-                -o /data/root/imagenet_val.tar.gz "$ANNOT_VAL_URL"
+              if [[ -f /annotations_src/imagenet_train.tar.gz && -f /annotations_src/imagenet_val.tar.gz ]]; then
+                echo "[stage-data] using annotation tarballs from PVC (/annotations_src)"
+                cp -f /annotations_src/imagenet_train.tar.gz /data/root/imagenet_train.tar.gz
+                cp -f /annotations_src/imagenet_val.tar.gz /data/root/imagenet_val.tar.gz
+              else
+                if [[ -z "${ANNOT_TRAIN_URL:-}" || -z "${ANNOT_VAL_URL:-}" ]]; then
+                  echo "No annotation tarballs found in /annotations_src and ANNOT_TRAIN_URL/ANNOT_VAL_URL are empty." >&2
+                  echo "Provide a PVC named imagenet-annotations-pvc with imagenet_{train,val}.tar.gz OR set URLs." >&2
+                  exit 2
+                fi
+                curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
+                  -o /data/root/imagenet_train.tar.gz "$ANNOT_TRAIN_URL"
+                curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
+                  -o /data/root/imagenet_val.tar.gz "$ANNOT_VAL_URL"
+              fi
 
               echo "[stage-data] extracting annotations"
               cd /data/root/imagenet_annotations
@@ -120,6 +138,8 @@ spec:
               mountPath: /data
             - name: kaggle-json
               mountPath: /secrets
+            - name: annotations-src
+              mountPath: /annotations_src
 
       containers:
         - name: train
@@ -130,6 +150,10 @@ spec:
               value: /data/datasets
             - name: CUDA_VISIBLE_DEVICES
               value: "0"
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
             # Make the robust loader ignore tiny JPEGs instead of crashing.
             - name: CBM_MIN_IMAGE_BYTES
               value: "2048"
@@ -154,20 +178,20 @@ spec:
                 --disable_activation_cache \
                 --savlg_stream_supervision \
                 --cbl_epochs 1 \
-                --cbl_batch_size 1024 \
-                --num_workers 16 \
-                --spatial_num_workers 16 \
+                --cbl_batch_size 2048 \
+                --num_workers 48 \
+                --spatial_num_workers 48 \
                 --prompt_batch_size 1024 \
                 --savlg_supervision_source gdino \
                 --savlg_residual_spatial_alpha 0.8
           resources:
             requests:
-              cpu: "32"
+              cpu: "96"
               memory: "64Gi"
               nvidia.com/gpu: "1"
               ephemeral-storage: "500Gi"
             limits:
-              cpu: "32"
+              cpu: "96"
               memory: "64Gi"
               nvidia.com/gpu: "1"
               ephemeral-storage: "500Gi"
