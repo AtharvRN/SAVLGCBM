@@ -19,17 +19,6 @@ spec:
             sizeLimit: 500Gi
         - name: work
           emptyDir: {}
-        # Optional: persistent place to store annotation tarballs.
-        # Create a PVC and name it here, then put:
-        #   imagenet_train.tar.gz
-        #   imagenet_val.tar.gz
-        # into the PVC root.
-        #
-        # If these files exist, the job will use them instead of downloading.
-        - name: annotations-src
-          persistentVolumeClaim:
-            claimName: imagenet-annotations-pvc
-            optional: true
         # Optional: mount Kaggle token as a secret at /secrets/kaggle.json
         # Create it with:
         #   kubectl -n <ns> create secret generic kaggle-json --from-file=kaggle.json=$HOME/.kaggle/kaggle.json
@@ -56,12 +45,6 @@ spec:
           env:
             - name: KAGGLE_URL
               value: "https://www.kaggle.com/api/v1/datasets/download/mayurmadnani/imagenet-dataset"
-            # Provide public direct-download URLs for annotation tarballs here.
-            # If empty, the init container will exit with a clear error.
-            - name: ANNOT_TRAIN_URL
-              value: ""
-            - name: ANNOT_VAL_URL
-              value: ""
           args:
             - |
               set -euo pipefail
@@ -69,7 +52,7 @@ spec:
               apt-get update -y >/dev/null
               apt-get install -y --no-install-recommends ca-certificates curl jq unzip wget >/dev/null
 
-              mkdir -p /data/root /data/datasets/imagenet/ILSVRC/Data/CLS-LOC
+              mkdir -p /data/root /data/incoming /data/datasets/imagenet/ILSVRC/Data/CLS-LOC
 
               if [[ ! -f /secrets/kaggle.json ]]; then
                 echo "Missing /secrets/kaggle.json. Create secret kaggle-json (see YAML comment) and retry." >&2
@@ -108,38 +91,12 @@ spec:
               ln -sfn "${DATA_BASE}/train" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/train
               ln -sfn "${DATA_BASE}/val" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/ImageNet_val
 
-              echo "[stage-data] downloading annotation tarballs"
-              mkdir -p /data/root/imagenet_annotations
-              if [[ -f /annotations_src/imagenet_train.tar.gz && -f /annotations_src/imagenet_val.tar.gz ]]; then
-                echo "[stage-data] using annotation tarballs from PVC (/annotations_src)"
-                cp -f /annotations_src/imagenet_train.tar.gz /data/root/imagenet_train.tar.gz
-                cp -f /annotations_src/imagenet_val.tar.gz /data/root/imagenet_val.tar.gz
-              else
-                if [[ -z "${ANNOT_TRAIN_URL:-}" || -z "${ANNOT_VAL_URL:-}" ]]; then
-                  echo "No annotation tarballs found in /annotations_src and ANNOT_TRAIN_URL/ANNOT_VAL_URL are empty." >&2
-                  echo "Provide a PVC named imagenet-annotations-pvc with imagenet_{train,val}.tar.gz OR set URLs." >&2
-                  exit 2
-                fi
-                curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
-                  -o /data/root/imagenet_train.tar.gz "$ANNOT_TRAIN_URL"
-                curl -L --fail --retry 20 --retry-all-errors --connect-timeout 30 \
-                  -o /data/root/imagenet_val.tar.gz "$ANNOT_VAL_URL"
-              fi
-
-              echo "[stage-data] extracting annotations"
-              cd /data/root/imagenet_annotations
-              tar -xzf /data/root/imagenet_train.tar.gz
-              tar -xzf /data/root/imagenet_val.tar.gz
-              rm -f /data/root/imagenet_train.tar.gz /data/root/imagenet_val.tar.gz
-
-              echo "[stage-data] done"
+              echo "[stage-data] done (waiting for annotation tarballs happens in the main container)"
           volumeMounts:
             - name: data
               mountPath: /data
             - name: kaggle-json
               mountPath: /secrets
-            - name: annotations-src
-              mountPath: /annotations_src
 
       containers:
         - name: train
@@ -168,6 +125,29 @@ spec:
               source /opt/conda/etc/profile.d/conda.sh
               conda activate cbm
 
+              # Expect annotation tarballs to be uploaded into ephemeral storage:
+              #   kubectl -n <ns> cp ~/Downloads/imagenet_train.tar.gz <pod>:/data/incoming/imagenet_train.tar.gz
+              #   kubectl -n <ns> cp ~/Downloads/imagenet_val.tar.gz   <pod>:/data/incoming/imagenet_val.tar.gz
+              #
+              # This avoids relying on SharePoint links or a PVC; extraction is done onto NVMe (emptyDir).
+              echo "[train] waiting for /data/incoming/imagenet_{train,val}.tar.gz ..."
+              for _ in $(seq 1 720); do
+                if [[ -f /data/incoming/imagenet_train.tar.gz && -f /data/incoming/imagenet_val.tar.gz ]]; then
+                  break
+                fi
+                sleep 10
+              done
+              if [[ ! -f /data/incoming/imagenet_train.tar.gz || ! -f /data/incoming/imagenet_val.tar.gz ]]; then
+                echo "Timed out waiting for annotation tarballs in /data/incoming." >&2
+                echo "Upload them with kubectl cp and re-run the job." >&2
+                exit 4
+              fi
+
+              mkdir -p /data/root/imagenet_annotations
+              echo "[train] extracting annotations to /data/root/imagenet_annotations (NVMe)"
+              tar -xzf /data/incoming/imagenet_train.tar.gz -C /data/root/imagenet_annotations
+              tar -xzf /data/incoming/imagenet_val.tar.gz -C /data/root/imagenet_annotations
+
               mkdir -p /work/out/saved_models /work/out/saved_activations
 
               python -u train_cbm.py \
@@ -188,12 +168,12 @@ spec:
             requests:
               cpu: "96"
               memory: "64Gi"
-              nvidia.com/gpu: "1"
+              nvidia.com/a100: "1"
               ephemeral-storage: "500Gi"
             limits:
               cpu: "96"
               memory: "64Gi"
-              nvidia.com/gpu: "1"
+              nvidia.com/a100: "1"
               ephemeral-storage: "500Gi"
           volumeMounts:
             - name: data
