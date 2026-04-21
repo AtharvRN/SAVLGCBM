@@ -11,6 +11,10 @@ spec:
       # If your cluster labels A100 nodes, uncomment/adjust the selector.
       # nodeSelector:
       #   nvidia.com/gpu.product: NVIDIA-A100-SXM4-80GB
+      #
+      # High-bandwidth hint (Nautilus): some nodes use label autilus.io/network=100000 (100GbE).
+      # nodeSelector:
+      #   autilus.io/network: "100000"
 
       volumes:
         # Node-local scratch (fast). This is NOT persistent.
@@ -38,6 +42,13 @@ spec:
           volumeMounts:
             - name: work
               mountPath: /work
+          resources:
+            requests:
+              cpu: "1"
+              memory: "4Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
 
         - name: stage-data
           image: ubuntu:22.04
@@ -97,6 +108,13 @@ spec:
               mountPath: /data
             - name: kaggle-json
               mountPath: /secrets
+          resources:
+            requests:
+              cpu: "4"
+              memory: "16Gi"
+            limits:
+              cpu: "8"
+              memory: "32Gi"
 
       containers:
         - name: train
@@ -105,8 +123,6 @@ spec:
           env:
             - name: DATASET_FOLDER
               value: /data/datasets
-            - name: CUDA_VISIBLE_DEVICES
-              value: "0"
             - name: OMP_NUM_THREADS
               value: "1"
             - name: MKL_NUM_THREADS
