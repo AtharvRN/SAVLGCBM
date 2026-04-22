@@ -4,17 +4,19 @@ SHELL ["/bin/bash", "-lc"]
 
 # System deps for cloning and building small python wheels.
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends git ca-certificates curl && \
+    apt-get install -y --no-install-recommends git ca-certificates curl bzip2 && \
     rm -rf /var/lib/apt/lists/*
 
 # Build the conda env at image build time (more reliable than doing it at job runtime).
 COPY envs/cbm.yml /tmp/cbm.yml
 
-# The upstream pytorch image pins a specific conda version; installing from only
-# conda-forge can fail to resolve that pin. Include `defaults` for conda itself.
-RUN conda install -n base -c conda-forge -c defaults -y mamba && \
-    mamba env create -f /tmp/cbm.yml && \
-    conda clean -a -y
+# The upstream pytorch image pins a specific conda version, and conda/mamba solves
+# can fail if that exact version disappears from channel repodata. Use micromamba
+# to build the env without depending on the base conda solver.
+RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | \
+      tar -xvj -C /usr/local/bin --strip-components=1 bin/micromamba && \
+    micromamba create -y -p /opt/conda/envs/cbm -f /tmp/cbm.yml && \
+    micromamba clean -a -y
 
 # Make the env available without requiring `conda activate`.
 ENV PATH=/opt/conda/envs/cbm/bin:$PATH
