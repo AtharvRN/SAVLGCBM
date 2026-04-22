@@ -18,6 +18,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Compute Lowercase Owner
+        shell: bash
+        run: |
+          echo "REPO_OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
       - name: Set Up Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -36,8 +41,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/savlgcbm-cbm:pt222-cu121
-            ghcr.io/${{ github.repository_owner }}/savlgcbm-cbm:sha-${{ github.sha }}
+            ghcr.io/${{ env.REPO_OWNER_LC }}/savlgcbm-cbm:pt222-cu121
+            ghcr.io/${{ env.REPO_OWNER_LC }}/savlgcbm-cbm:sha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
