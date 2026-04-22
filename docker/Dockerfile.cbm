@@ -10,10 +10,11 @@ RUN apt-get update -y && \
 # Build the conda env at image build time (more reliable than doing it at job runtime).
 COPY envs/cbm.yml /tmp/cbm.yml
 
-RUN conda install -n base -c conda-forge -y mamba && \
+# The upstream pytorch image pins a specific conda version; installing from only
+# conda-forge can fail to resolve that pin. Include `defaults` for conda itself.
+RUN conda install -n base -c conda-forge -c defaults -y mamba && \
     mamba env create -f /tmp/cbm.yml && \
     conda clean -a -y
 
 # Make the env available without requiring `conda activate`.
 ENV PATH=/opt/conda/envs/cbm/bin:$PATH
-
