@@ -1,0 +1,19 @@
+.git
+.gitignore
+.DS_Store
+__pycache__
+**/__pycache__/
+**/*.pyc
+
+# local artifacts
+datasets/
+saved_models/
+annotations/
+runs/
+wandb/
+output/
+results/
+_loc_results/
+_loc_results_maskgt/
+notebooks/
+

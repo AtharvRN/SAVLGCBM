@@ -1,0 +1,19 @@
+FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
+
+SHELL ["/bin/bash", "-lc"]
+
+# System deps for cloning and building small python wheels.
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends git ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build the conda env at image build time (more reliable than doing it at job runtime).
+COPY envs/cbm.yml /tmp/cbm.yml
+
+RUN conda install -n base -c conda-forge -y mamba && \
+    mamba env create -f /tmp/cbm.yml && \
+    conda clean -a -y
+
+# Make the env available without requiring `conda activate`.
+ENV PATH=/opt/conda/envs/cbm/bin:$PATH
+
