@@ -11,9 +11,16 @@ from loguru import logger
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 from tqdm import tqdm
 
-import model.utils as utils
 import data.utils as data_utils
-from model.cbm import Backbone, ConceptLayer, NormalizationLayer
+import model.utils as utils
+from model.cbm import (
+    Backbone,
+    ConceptLayer,
+    NormalizationLayer,
+    amp_autocast_context,
+    enable_backbone_channels_last,
+    prepare_backbone_inputs,
+)
 from data.utils import canonicalize_concept_label, format_concept, get_classes
 from glm_saga.elasticnet import IndexedTensorDataset
 from data.utils import plot_annotations
@@ -83,10 +90,16 @@ def get_or_create_backbone_embedding_cache(
     embeddings = []
     concept_one_hots = []
     labels = []
+    use_channels_last = enable_backbone_channels_last(backbone)
     with torch.no_grad():
         for features, concept_one_hot, batch_labels in tqdm(loader):
-            features = features.to(device)
-            batch_embeddings = backbone(features).detach().cpu()
+            features = prepare_backbone_inputs(
+                features,
+                device=device,
+                use_channels_last=use_channels_last,
+            )
+            with amp_autocast_context(device):
+                batch_embeddings = backbone(features).detach().cpu()
             embeddings.append(batch_embeddings)
             concept_one_hots.append(concept_one_hot.cpu())
             labels.append(batch_labels.cpu())
@@ -429,7 +442,16 @@ def get_concept_dataloader(
             logger.info(f"Val dataset size: {len(val_dataset)}")
             dataset = val_dataset
 
-    loader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, shuffle=shuffle)
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "shuffle": shuffle,
+        "pin_memory": torch.cuda.is_available(),
+    }
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = 4
+    loader = DataLoader(dataset, **loader_kwargs)
     return loader
 
 
@@ -492,6 +514,7 @@ def get_final_layer_dataset(
 ):
     if load_dir is None:
         logger.info("Creating final layer training and validation datasets")
+        use_channels_last = enable_backbone_channels_last(backbone)
         with torch.no_grad():
             if use_activation_cache:
                 train_cached = get_or_create_backbone_embedding_cache(
@@ -512,7 +535,8 @@ def get_final_layer_dataset(
                 train_concept_features = []
                 for start_idx in tqdm(range(0, len(train_cached["embeddings"]), batch_size)):
                     embeddings = train_cached["embeddings"][start_idx:start_idx + batch_size].to(device)
-                    train_concept_features.append(cbl(embeddings).detach().cpu())
+                    with amp_autocast_context(device):
+                        train_concept_features.append(cbl(embeddings).detach().cpu())
                 train_concept_features = torch.cat(train_concept_features, dim=0)
                 train_concept_labels = train_cached["labels"]
 
@@ -520,7 +544,8 @@ def get_final_layer_dataset(
                 val_concept_features = []
                 for start_idx in tqdm(range(0, len(val_cached["embeddings"]), batch_size)):
                     embeddings = val_cached["embeddings"][start_idx:start_idx + batch_size].to(device)
-                    val_concept_features.append(cbl(embeddings).detach().cpu())
+                    with amp_autocast_context(device):
+                        val_concept_features.append(cbl(embeddings).detach().cpu())
                 val_concept_features = torch.cat(val_concept_features, dim=0)
                 val_concept_labels = val_cached["labels"]
             else:
@@ -528,8 +553,13 @@ def get_final_layer_dataset(
                 train_concept_labels = []
                 logger.info("Creating final layer training dataset")
                 for features, _, labels in tqdm(train_loader):
-                    features = features.to(device)
-                    concept_logits = cbl(backbone(features))
+                    features = prepare_backbone_inputs(
+                        features,
+                        device=device,
+                        use_channels_last=use_channels_last,
+                    )
+                    with amp_autocast_context(device):
+                        concept_logits = cbl(backbone(features))
                     train_concept_features.append(concept_logits.detach().cpu())
                     train_concept_labels.append(labels)
                 train_concept_features = torch.cat(train_concept_features, dim=0)
@@ -539,8 +569,13 @@ def get_final_layer_dataset(
                 val_concept_labels = []
                 logger.info("Creating final layer validation dataset")
                 for features, _, labels in tqdm(val_loader):
-                    features = features.to(device)
-                    concept_logits = cbl(backbone(features))
+                    features = prepare_backbone_inputs(
+                        features,
+                        device=device,
+                        use_channels_last=use_channels_last,
+                    )
+                    with amp_autocast_context(device):
+                        concept_logits = cbl(backbone(features))
                     val_concept_features.append(concept_logits.detach().cpu())
                     val_concept_labels.append(labels)
                 val_concept_features = torch.cat(val_concept_features, dim=0)

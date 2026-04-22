@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from contextlib import nullcontext
 from typing import Dict, List, Optional
 
 import torch
@@ -15,6 +16,49 @@ import clip
 from data import utils as data_utils
 from glm_saga.elasticnet import glm_saga
 from model.sam import SAM
+
+
+def _uses_cuda(device: str) -> bool:
+    return str(device).startswith("cuda") and torch.cuda.is_available()
+
+
+def _amp_dtype(device: str) -> Optional[torch.dtype]:
+    if not _uses_cuda(device):
+        return None
+    if torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
+def amp_autocast_context(device: str):
+    amp_dtype = _amp_dtype(device)
+    if amp_dtype is None:
+        return nullcontext()
+    return torch.amp.autocast(device_type="cuda", dtype=amp_dtype)
+
+
+def prepare_backbone_inputs(
+    features: torch.Tensor,
+    device: str,
+    use_channels_last: bool = False,
+) -> torch.Tensor:
+    if use_channels_last and features.ndim == 4:
+        features = features.contiguous(memory_format=torch.channels_last)
+    return features.to(device, non_blocking=_uses_cuda(device))
+
+
+def prepare_target_tensor(tensor: torch.Tensor, device: str) -> torch.Tensor:
+    return tensor.to(device, non_blocking=_uses_cuda(device))
+
+
+def enable_backbone_channels_last(backbone: nn.Module) -> bool:
+    backbone_name = getattr(backbone, "backbone_name", "")
+    if not str(backbone_name).startswith("resnet"):
+        return False
+    module = getattr(backbone, "backbone", backbone)
+    module.to(memory_format=torch.channels_last)
+    logger.info("Enabled channels-last for {}", backbone_name)
+    return True
 
 
 class CBM_model(torch.nn.Module):
@@ -417,6 +461,7 @@ def validate_cbl(
     cache_batch_size: int = 512,
 ):
     val_loss = 0.0
+    use_channels_last = enable_backbone_channels_last(backbone)
     with torch.no_grad():
         logger.info("Running CBL validation")
         if cached_embeddings is not None and cached_concepts is not None:
@@ -435,11 +480,16 @@ def validate_cbl(
             val_loss = val_loss / max(1, n_batches)
         else:
             for features, concept_one_hot, _ in tqdm(val_loader):
-                features = features.to(device)
-                concept_one_hot = concept_one_hot.to(device)
+                features = prepare_backbone_inputs(
+                    features,
+                    device=device,
+                    use_channels_last=use_channels_last,
+                )
+                concept_one_hot = prepare_target_tensor(concept_one_hot, device)
 
                 # forward pass
-                concept_logits = cbl(backbone(features))
+                with amp_autocast_context(device):
+                    concept_logits = cbl(backbone(features))
 
                 # calculate loss
                 batch_loss = loss_fn(concept_logits, concept_one_hot)
@@ -503,6 +553,11 @@ def train_cbl(
     best_val_loss = float("inf")
     best_val_loss_epoch = None
     best_model_state = None
+    amp_dtype = _amp_dtype(device)
+    scaler = torch.amp.GradScaler(
+        "cuda", enabled=amp_dtype == torch.float16
+    )
+    use_channels_last = enable_backbone_channels_last(backbone)
     if data_parallel:
         backbone = torch.nn.DataParallel(backbone)
         cbl = torch.nn.DataParallel(cbl)
@@ -513,32 +568,44 @@ def train_cbl(
         logger.info(f"Running CBL training for Epoch: {epoch}")
         its = tqdm(total=len(train_loader), position=0, leave=True)
         for batch_idx, (features, concept_one_hot, _) in enumerate(train_loader):
-            features = features.to(device)  # (batch_size, feature_dim)
-            concept_one_hot = concept_one_hot.to(device)  # (batch_size, n_concepts)
+            features = prepare_backbone_inputs(
+                features,
+                device=device,
+                use_channels_last=use_channels_last,
+            )  # (batch_size, feature_dim)
+            concept_one_hot = prepare_target_tensor(
+                concept_one_hot, device
+            )  # (batch_size, n_concepts)
 
             def compute_batch_loss():
-                if finetune:
-                    backbone.train()
-                    embeddings = backbone(features)
-                else:
-                    with torch.no_grad():
+                with amp_autocast_context(device):
+                    if finetune:
+                        backbone.train()
                         embeddings = backbone(features)
-                concept_logits = cbl(embeddings)
-                return loss_fn(concept_logits, concept_one_hot)
+                    else:
+                        with torch.no_grad():
+                            embeddings = backbone(features)
+                    concept_logits = cbl(embeddings)
+                    return loss_fn(concept_logits, concept_one_hot)
 
             batch_loss = compute_batch_loss()
             train_loss += batch_loss.item()
 
             # backprop
             optimizer.zero_grad()
-            batch_loss.backward()
             if use_sam:
+                scaler.scale(batch_loss).backward()
+                scaler.unscale_(optimizer)
                 optimizer.first_step(zero_grad=True)
                 second_loss = compute_batch_loss()
-                second_loss.backward()
+                scaler.scale(second_loss).backward()
+                scaler.unscale_(optimizer)
                 optimizer.second_step(zero_grad=True)
+                scaler.update()
             else:
-                optimizer.step()
+                scaler.scale(batch_loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
 
             # print batch stats
             if (batch_idx + 1) % 1000 == 0:
