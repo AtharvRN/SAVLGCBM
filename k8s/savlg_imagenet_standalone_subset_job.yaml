@@ -1,0 +1,143 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: savlg-imagenet-standalone-subset
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: savlg-imagenet-standalone-subset
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-A10
+      initContainers:
+        - name: clone-repo
+          image: alpine/git:2.45.2
+          command: ["sh", "-lc"]
+          env:
+            - name: REPO_URL
+              value: "https://github.com/AtharvRN/SAVLGCBM.git"
+            - name: REPO_REF
+              value: "imagenet-training"
+          args:
+            - |
+              set -euo pipefail
+              echo "[clone-repo] cloning ${REPO_URL} ref=${REPO_REF}"
+              git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" /work/SAVLGCBM
+              echo "[clone-repo] commit $(git -C /work/SAVLGCBM rev-parse --short HEAD)"
+              chmod -R a+rX /work/SAVLGCBM
+              mkdir -p /work/out
+              chmod 777 /work /work/out
+          volumeMounts:
+            - name: work
+              mountPath: /work
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+
+      containers:
+        - name: train
+          image: ghcr.io/atharvrn/savlgcbm-cbm:pt222-cu121
+          command: ["bash", "-lc"]
+          env:
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: IMAGENET_TRAIN_ROOT
+              value: /scratch/imagenet_extract_runs_fresh/20260420_135422/train
+            - name: IMAGENET_ANNOTATION_ROOT
+              value: /scratch/imagenet_annotations
+            - name: TORCH_HOME
+              value: /scratch/torch_home
+          args:
+            - |
+              set -euo pipefail
+              cd /work/SAVLGCBM
+
+              export MKL_INTERFACE_LAYER=GNU
+              source /opt/conda/etc/profile.d/conda.sh
+              conda activate cbm
+
+              if [[ ! -d "${IMAGENET_TRAIN_ROOT}" ]]; then
+                echo "Missing IMAGENET_TRAIN_ROOT=${IMAGENET_TRAIN_ROOT}" >&2
+                exit 10
+              fi
+              if [[ ! -d "${IMAGENET_ANNOTATION_ROOT}/imagenet_train" ]]; then
+                echo "Missing ${IMAGENET_ANNOTATION_ROOT}/imagenet_train" >&2
+                exit 11
+              fi
+              if [[ ! -f "${IMAGENET_ANNOTATION_ROOT}/imagenet_train/0.json" ]]; then
+                echo "Expected index-based GDINO annotations under ${IMAGENET_ANNOTATION_ROOT}/imagenet_train" >&2
+                exit 12
+              fi
+
+              RUN_BASE=/scratch/savlg_imagenet_standalone_runs
+              mkdir -p "${RUN_BASE}" "${TORCH_HOME}"
+              STAMP="${RUN_BASE}/.launch_$(date -u +%Y%m%dT%H%M%SZ)"
+              touch "${STAMP}"
+
+              python -u scripts/train_savlg_imagenet_standalone.py \
+                --train_root "${IMAGENET_TRAIN_ROOT}" \
+                --annotation_dir "${IMAGENET_ANNOTATION_ROOT}" \
+                --save_dir "${RUN_BASE}" \
+                --epochs 1 \
+                --batch_size 256 \
+                --workers 12 \
+                --prefetch_factor 4 \
+                --amp fp16 \
+                --max_train_images 10000 \
+                --val_split 0.1 \
+                --branch_arch dual \
+                --spatial_branch_mode multiscale_conv45 \
+                --residual_alpha 0.8 \
+                --pin_memory \
+                --persistent_workers \
+                --channels_last \
+                --tf32 \
+                --log_every 5 \
+                --print_config
+
+              RUN_DIR="$(find "${RUN_BASE}" -mindepth 1 -maxdepth 1 -type d -newer "${STAMP}" | LC_ALL=C sort | tail -n 1)"
+              if [[ -z "${RUN_DIR}" ]]; then
+                echo "Could not locate new run directory under ${RUN_BASE}" >&2
+                exit 13
+              fi
+              printf '%s\n' "${RUN_DIR}" | tee "${RUN_BASE}/LATEST_RUN.txt"
+              echo "[train] latest standalone subset run: ${RUN_DIR}"
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: scratch-pvc
+              mountPath: /scratch
+            - name: dev-shm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+              cpu: "12"
+              memory: "48Gi"
+            limits:
+              nvidia.com/gpu: "1"
+              cpu: "12"
+              memory: "48Gi"
+
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: scratch-pvc
+          persistentVolumeClaim:
+            claimName: atharv-rwo-scratch-2ti
+        - name: dev-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
