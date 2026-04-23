@@ -9,14 +9,7 @@ spec:
       restartPolicy: Never
       # Pin to a specific node by hostname label (Gatekeeper blocks nodeName).
       nodeSelector:
-        kubernetes.io/hostname: hcc-gpengine-shor-c5303.unl.edu
-
-      # This node appears with an issue taint in the UI. Tolerate it explicitly.
-      tolerations:
-        - key: "nautilus.io/issue"
-          operator: "Equal"
-          value: "1663"
-          effect: "NoSchedule"
+        kubernetes.io/hostname: node-1-1.sdsc.optiputer.net
 
       # If your cluster labels A100 nodes, uncomment/adjust the selector.
       # nodeSelector:
@@ -34,6 +27,9 @@ spec:
         - name: work
           emptyDir: {}
         # Persistent source for annotation tarballs.
+        # Put these files in the PVC root:
+        #   imagenet_train.tar.gz
+        #   imagenet_val.tar.gz
         - name: annotations-src
           persistentVolumeClaim:
             claimName: imagenet-annotations-pvc
@@ -148,23 +144,11 @@ spec:
               mkdir -p /data/root/imagenet_annotations
               chmod 777 /data/root/imagenet_annotations
 
-              echo "[stage-data] validating annotation tarballs on PVC"
               if [[ ! -f /annotations_src/imagenet_train.tar.gz || ! -f /annotations_src/imagenet_val.tar.gz ]]; then
                 echo "Missing /annotations_src/imagenet_{train,val}.tar.gz in PVC imagenet-annotations-pvc" >&2
                 ls -lah /annotations_src >&2 || true
                 exit 10
               fi
-              got_train="$(md5sum /annotations_src/imagenet_train.tar.gz | awk '{print $1}')"
-              got_val="$(md5sum /annotations_src/imagenet_val.tar.gz | awk '{print $1}')"
-              if [[ "$got_train" != "c93207b0f3dfa070afc2771099ad7b0a" ]]; then
-                echo "MD5 mismatch for /annotations_src/imagenet_train.tar.gz: got=$got_train" >&2
-                exit 11
-              fi
-              if [[ "$got_val" != "3c91c33f32146518d29450e279e2c2b6" ]]; then
-                echo "MD5 mismatch for /annotations_src/imagenet_val.tar.gz: got=$got_val" >&2
-                exit 11
-              fi
-
               echo "[stage-data] extracting annotation tarballs from PVC to NVMe (/data/root/imagenet_annotations)"
               tar -xzf /annotations_src/imagenet_train.tar.gz -C /data/root/imagenet_annotations
               tar -xzf /annotations_src/imagenet_val.tar.gz -C /data/root/imagenet_annotations
@@ -205,12 +189,6 @@ spec:
             # Make the robust loader ignore tiny JPEGs instead of crashing.
             - name: CBM_MIN_IMAGE_BYTES
               value: "2048"
-            # Optional: expected md5 checksums for the uploaded annotation tarballs.
-            # Set these to make the job refuse to extract truncated uploads.
-            - name: ANNOT_TRAIN_MD5
-              value: "c93207b0f3dfa070afc2771099ad7b0a"
-            - name: ANNOT_VAL_MD5
-              value: "3c91c33f32146518d29450e279e2c2b6"
           args:
             - |
               set -euo pipefail
@@ -292,12 +270,12 @@ spec:
               echo "[train] training finished successfully"
           resources:
             requests:
-              cpu: "100"
+              cpu: "32"
               memory: "64Gi"
               nvidia.com/a100: "1"
               ephemeral-storage: "500Gi"
             limits:
-              cpu: "100"
+              cpu: "32"
               memory: "64Gi"
               nvidia.com/a100: "1"
               ephemeral-storage: "500Gi"

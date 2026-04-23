@@ -13,12 +13,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger
-from torch.utils.data import DataLoader, Dataset, TensorDataset
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from data import utils as data_utils
 from data.concept_dataset import get_filtered_concepts_and_counts
-from glm_saga.elasticnet import IndexedTensorDataset
+from glm_saga.elasticnet import IndexedDataset
 from methods.common import build_run_dir, save_args, write_artifacts
 from methods.lf import TransformedSubset, subset_targets, use_original_label_free_protocol
 from methods.salf import (
@@ -2396,16 +2396,107 @@ def train_concept_head(
     return concept_layer
 
 
-def extract_global_concepts(
+class MemmapConceptDataset(Dataset):
+    def __init__(
+        self,
+        feature_path: str,
+        label_path: str,
+        num_examples: int,
+        num_features: int,
+        mean: Optional[torch.Tensor] = None,
+        std: Optional[torch.Tensor] = None,
+    ):
+        self.feature_path = feature_path
+        self.label_path = label_path
+        self.num_examples = int(num_examples)
+        self.num_features = int(num_features)
+        self.mean = None if mean is None else mean.detach().cpu().view(-1).to(dtype=torch.float32)
+        self.std = None if std is None else std.detach().cpu().view(-1).to(dtype=torch.float32)
+        self._features = None
+        self._labels = None
+
+    def _ensure_open(self):
+        if self._features is None:
+            self._features = np.memmap(
+                self.feature_path,
+                mode="r",
+                dtype=np.float32,
+                shape=(self.num_examples, self.num_features),
+            )
+        if self._labels is None:
+            self._labels = np.memmap(
+                self.label_path,
+                mode="r",
+                dtype=np.int64,
+                shape=(self.num_examples,),
+            )
+
+    def __len__(self):
+        return self.num_examples
+
+    def __getitem__(self, idx: int):
+        self._ensure_open()
+        features = torch.from_numpy(np.array(self._features[idx], dtype=np.float32, copy=True))
+        if self.mean is not None and self.std is not None:
+            features = (features - self.mean) / self.std
+        label = int(self._labels[idx])
+        return features, label
+
+
+def _savlg_concept_cache_prefix(
+    args,
+    split_name: str,
+    dataset: Dataset,
+    concepts: Sequence[str],
+) -> str:
+    cache_dir = os.path.join(getattr(args, "activation_dir", "saved_activations"), "savlg_glm")
+    os.makedirs(cache_dir, exist_ok=True)
+    indices = getattr(dataset, "indices", None)
+    if isinstance(indices, (list, tuple)) and indices:
+        h = hashlib.sha1()
+        for idx in indices:
+            h.update(struct.pack("<I", int(idx)))
+        sample_tag = f"idx_{len(indices)}_{h.hexdigest()[:12]}"
+    else:
+        sample_tag = f"n_{len(dataset)}"
+    concept_hash = hashlib.sha1("\n".join(concepts).encode("utf-8")).hexdigest()[:12]
+    return os.path.join(
+        cache_dir,
+        f"{args.dataset}_{split_name}_{args.backbone}_{sample_tag}_{concept_hash}",
+    )
+
+
+def extract_global_concepts_to_memmap(
     args,
     backbone: SpatialBackbone,
     concept_layer: nn.Module,
     loader: DataLoader,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    split_name: str,
+    concepts: Sequence[str],
+) -> Tuple[str, str, torch.Tensor, torch.Tensor]:
     backbone.eval()
     concept_layer.eval()
-    concept_features = []
-    labels = []
+    num_examples = len(loader.dataset)
+    num_features = len(concepts)
+    prefix = _savlg_concept_cache_prefix(args, split_name, loader.dataset, concepts)
+    feature_path = f"{prefix}_features.dat"
+    label_path = f"{prefix}_labels.dat"
+    meta_path = f"{prefix}_meta.pt"
+    feature_store = np.memmap(
+        feature_path,
+        mode="w+",
+        dtype=np.float32,
+        shape=(num_examples, num_features),
+    )
+    label_store = np.memmap(
+        label_path,
+        mode="w+",
+        dtype=np.int64,
+        shape=(num_examples,),
+    )
+    feature_sum = np.zeros(num_features, dtype=np.float64)
+    feature_sq_sum = np.zeros(num_features, dtype=np.float64)
+    offset = 0
     with torch.no_grad():
         for images, target in tqdm(loader, desc="SAVLG concept extraction"):
             if _savlg_batch_already_features(images):
@@ -2419,9 +2510,48 @@ def extract_global_concepts(
                 spatial_maps,
                 args,
             )
-            concept_features.append(final_logits.cpu())
-            labels.append(target)
-    return torch.cat(concept_features, dim=0), torch.cat(labels, dim=0)
+            final_logits_cpu = final_logits.detach().to(dtype=torch.float32).cpu()
+            batch_features = final_logits_cpu.numpy()
+            batch_labels = target.detach().cpu().numpy().astype(np.int64, copy=False)
+            batch_size = batch_features.shape[0]
+            next_offset = offset + batch_size
+            feature_store[offset:next_offset] = batch_features
+            label_store[offset:next_offset] = batch_labels
+            feature_sum += batch_features.sum(axis=0, dtype=np.float64)
+            feature_sq_sum += np.square(batch_features, dtype=np.float64).sum(axis=0, dtype=np.float64)
+            offset = next_offset
+
+    if offset != num_examples:
+        raise RuntimeError(
+            f"SAVLG concept extraction wrote {offset} examples, expected {num_examples}"
+        )
+
+    feature_store.flush()
+    label_store.flush()
+    del feature_store
+    del label_store
+
+    mean_np = feature_sum / max(num_examples, 1)
+    if num_examples > 1:
+        var_np = (feature_sq_sum - (feature_sum ** 2) / num_examples) / (num_examples - 1)
+        var_np = np.maximum(var_np, 0.0)
+    else:
+        var_np = np.zeros_like(mean_np)
+    mean = torch.from_numpy(mean_np.astype(np.float32)).unsqueeze(0)
+    std = torch.from_numpy(np.sqrt(var_np).astype(np.float32)).unsqueeze(0)
+    std = torch.clamp(std, min=1e-6)
+    torch.save(
+        {
+            "feature_path": feature_path,
+            "label_path": label_path,
+            "num_examples": num_examples,
+            "num_features": num_features,
+            "mean": mean,
+            "std": std,
+        },
+        meta_path,
+    )
+    return feature_path, label_path, mean, std
 
 
 def evaluate_savlg_accuracy(
@@ -2653,23 +2783,51 @@ def train_savlg_cbm(args):
         val_loader = DataLoader(
             val_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
         )
-    train_concepts, train_labels = extract_global_concepts(args, backbone, concept_layer, train_loader)
-    val_concepts, val_labels = extract_global_concepts(args, backbone, concept_layer, val_loader)
+    train_feature_path, train_label_path, train_mean, train_std = extract_global_concepts_to_memmap(
+        args,
+        backbone,
+        concept_layer,
+        train_loader,
+        "train",
+        concepts,
+    )
+    val_feature_path, val_label_path, _, _ = extract_global_concepts_to_memmap(
+        args,
+        backbone,
+        concept_layer,
+        val_loader,
+        "val",
+        concepts,
+    )
 
-    train_mean = train_concepts.mean(dim=0, keepdim=True)
-    train_std = torch.clamp(train_concepts.std(dim=0, keepdim=True), min=1e-6)
-    train_concepts = (train_concepts - train_mean) / train_std
-    val_concepts = (val_concepts - train_mean) / train_std
+    train_concept_dataset = MemmapConceptDataset(
+        train_feature_path,
+        train_label_path,
+        len(train_loader.dataset),
+        len(concepts),
+        mean=train_mean,
+        std=train_std,
+    )
+    val_concept_dataset = MemmapConceptDataset(
+        val_feature_path,
+        val_label_path,
+        len(val_loader.dataset),
+        len(concepts),
+        mean=train_mean,
+        std=train_std,
+    )
 
     train_final_loader = DataLoader(
-        IndexedTensorDataset(train_concepts, train_labels),
+        IndexedDataset(train_concept_dataset),
         batch_size=args.saga_batch_size,
         shuffle=True,
+        pin_memory=True,
     )
     val_final_loader = DataLoader(
-        TensorDataset(val_concepts, val_labels),
+        val_concept_dataset,
         batch_size=args.saga_batch_size,
         shuffle=False,
+        pin_memory=True,
     )
     final_layer = nn.Linear(len(concepts), len(classes)).to(args.device)
     final_layer.weight.data.zero_()
