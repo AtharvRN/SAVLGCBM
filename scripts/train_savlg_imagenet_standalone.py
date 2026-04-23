@@ -3,6 +3,7 @@ import json
 import math
 import os
 import random
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -18,6 +19,12 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torchvision.models import ResNet50_Weights, resnet50
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from glm_saga.elasticnet import glm_saga
 
 
 IMAGENET_LABEL_ALIASES = {
@@ -86,6 +93,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup_steps", type=int, default=5)
     parser.add_argument("--log_every", type=int, default=20)
     parser.add_argument("--save_every", type=int, default=1)
+    parser.add_argument("--skip_final_layer", action="store_true")
+    parser.add_argument("--saga_batch_size", type=int, default=512)
+    parser.add_argument("--saga_step_size", type=float, default=0.1)
+    parser.add_argument("--saga_lam", type=float, default=5e-4)
+    parser.add_argument("--saga_n_iters", type=int, default=80)
     parser.add_argument("--print_config", action="store_true")
     return parser.parse_args()
 
@@ -137,6 +149,11 @@ class Config:
     warmup_steps: int
     log_every: int
     save_every: int
+    skip_final_layer: bool
+    saga_batch_size: int
+    saga_step_size: float
+    saga_lam: float
+    saga_n_iters: int
     print_config: bool
 
 
@@ -187,6 +204,11 @@ def build_config(args: argparse.Namespace) -> Config:
         warmup_steps=args.warmup_steps,
         log_every=args.log_every,
         save_every=args.save_every,
+        skip_final_layer=bool(args.skip_final_layer),
+        saga_batch_size=args.saga_batch_size,
+        saga_step_size=args.saga_step_size,
+        saga_lam=args.saga_lam,
+        saga_n_iters=args.saga_n_iters,
         print_config=bool(args.print_config),
     )
 
@@ -373,6 +395,18 @@ def collate_batch(batch: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "annotations": [item["annotation"] for item in batch],
         "image_sizes": [item["image_size"] for item in batch],
     }
+
+
+class IndexedTensorDataset(Dataset):
+    def __init__(self, features: torch.Tensor, targets: torch.Tensor) -> None:
+        self.features = features
+        self.targets = targets
+
+    def __len__(self) -> int:
+        return int(self.features.shape[0])
+
+    def __getitem__(self, index: int):
+        return self.features[index], self.targets[index], int(index)
 
 
 def build_loader(dataset: Dataset, cfg: Config, shuffle: bool, drop_last: bool) -> DataLoader:
@@ -884,6 +918,148 @@ def save_checkpoint(
         handle.write(json.dumps(payload) + "\n")
 
 
+@torch.no_grad()
+def extract_concept_features(
+    backbone: nn.Module,
+    head: nn.Module,
+    loader: DataLoader,
+    cfg: Config,
+    split_name: str,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    head.eval()
+    features: List[torch.Tensor] = []
+    targets: List[torch.Tensor] = []
+    total = 0
+    start_time = time.perf_counter()
+    for step, batch in enumerate(loader, start=1):
+        images = prepare_images(batch["images"], cfg)
+        with autocast_context(cfg):
+            feats = backbone(images)
+            outputs = head(feats)
+        features.append(outputs["final_logits"].detach().float().cpu())
+        targets.append(batch["class_ids"].detach().cpu())
+        total += int(images.shape[0])
+        if step % cfg.log_every == 0:
+            elapsed = time.perf_counter() - start_time
+            print(
+                f"[{split_name}_features] step={step}/{len(loader)} "
+                f"n={total} ips={total / max(elapsed, 1e-6):.2f}",
+                flush=True,
+            )
+    return torch.cat(features, dim=0), torch.cat(targets, dim=0)
+
+
+def standardize_features(
+    train_features: torch.Tensor,
+    val_features: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    mean = train_features.mean(dim=0)
+    std = train_features.std(dim=0, unbiased=True)
+    std = torch.where(std > 1e-6, std, torch.ones_like(std))
+    return (train_features - mean) / std, (val_features - mean) / std, mean, std
+
+
+def topk_accuracy(logits: torch.Tensor, targets: torch.Tensor, k: int) -> float:
+    k = min(k, int(logits.shape[1]))
+    topk = logits.topk(k, dim=1).indices
+    correct = topk.eq(targets.unsqueeze(1)).any(dim=1)
+    return float(correct.float().mean().item())
+
+
+@torch.no_grad()
+def evaluate_final_layer(
+    linear: nn.Linear,
+    features: torch.Tensor,
+    targets: torch.Tensor,
+    device: str,
+) -> Dict[str, float]:
+    logits = linear(features.to(device))
+    targets_device = targets.to(device)
+    loss = F.cross_entropy(logits, targets_device).item()
+    top1 = topk_accuracy(logits, targets_device, k=1)
+    top5 = topk_accuracy(logits, targets_device, k=5)
+    return {"loss": loss, "top1": top1, "top5": top5, "n": int(targets.shape[0])}
+
+
+def train_sparse_final_layer(
+    train_features: torch.Tensor,
+    train_targets: torch.Tensor,
+    val_features: torch.Tensor,
+    val_targets: torch.Tensor,
+    cfg: Config,
+    n_classes: int,
+    run_dir: Path,
+) -> Dict[str, Any]:
+    train_dataset = IndexedTensorDataset(train_features, train_targets)
+    val_dataset = torch.utils.data.TensorDataset(val_features, val_targets)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=cfg.saga_batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=cfg.pin_memory,
+        drop_last=False,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=cfg.saga_batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=cfg.pin_memory,
+        drop_last=False,
+    )
+
+    linear = nn.Linear(int(train_features.shape[1]), int(n_classes), bias=True).to(cfg.device)
+    linear.weight.data.zero_()
+    linear.bias.data.zero_()
+
+    metadata = {"max_reg": {"nongrouped": cfg.saga_lam}}
+    output = glm_saga(
+        linear,
+        train_loader,
+        cfg.saga_step_size,
+        cfg.saga_n_iters,
+        0.99,
+        epsilon=1,
+        k=1,
+        val_loader=val_loader,
+        do_zero=False,
+        metadata=metadata,
+        n_ex=len(train_dataset),
+        n_classes=n_classes,
+        verbose=10,
+    )
+    best = output["best"]
+    linear.load_state_dict({"weight": best["weight"], "bias": best["bias"]})
+
+    train_metrics = evaluate_final_layer(linear, train_features, train_targets, cfg.device)
+    val_metrics = evaluate_final_layer(linear, val_features, val_targets, cfg.device)
+
+    payload = {
+        "best": {
+            "lam": float(best["lam"]),
+            "lr": float(best["lr"]),
+            "alpha": float(best["alpha"]),
+            "time": float(best["time"]),
+            "metrics": best["metrics"],
+        },
+        "train": train_metrics,
+        "val": val_metrics,
+        "nnz": int((best["weight"].abs() > 1e-5).sum().item()),
+        "total": int(best["weight"].numel()),
+    }
+
+    torch.save(
+        {
+            "weight": best["weight"],
+            "bias": best["bias"],
+        },
+        run_dir / "final_layer_glm_saga.pt",
+    )
+    (run_dir / "final_layer_summary.json").write_text(json.dumps(payload, indent=2))
+    return payload
+
+
 def profile_pipeline(cfg: Config) -> Dict[str, Any]:
     concepts = load_concepts(cfg.concept_file)
     dataset = SafeImageFolderWithAnnotations(
@@ -1052,6 +1228,37 @@ def run_training(cfg: Config) -> Dict[str, Any]:
         if epoch % cfg.save_every == 0:
             save_checkpoint(run_dir, head, optimizer, epoch, cfg, train_metrics, val_metrics)
 
+    final_layer_summary: Optional[Dict[str, Any]] = None
+    if not cfg.skip_final_layer:
+        train_features, train_targets = extract_concept_features(
+            backbone, head, train_loader, cfg, split_name="train"
+        )
+        val_features, val_targets = extract_concept_features(
+            backbone, head, val_loader, cfg, split_name="val"
+        )
+        train_features, val_features, feature_mean, feature_std = standardize_features(
+            train_features, val_features
+        )
+        torch.save(
+            {"mean": feature_mean, "std": feature_std},
+            run_dir / "final_layer_normalization.pt",
+        )
+        final_layer_summary = train_sparse_final_layer(
+            train_features=train_features,
+            train_targets=train_targets,
+            val_features=val_features,
+            val_targets=val_targets,
+            cfg=cfg,
+            n_classes=len(train_dataset_full.dataset.classes),
+            run_dir=run_dir,
+        )
+        print(
+            f"[final_layer] train_top1={final_layer_summary['train']['top1']:.4f} "
+            f"val_top1={final_layer_summary['val']['top1']:.4f} "
+            f"sparsity={final_layer_summary['nnz']}/{final_layer_summary['total']}",
+            flush=True,
+        )
+
     result = {
         "run_dir": str(run_dir),
         "best_val_loss": best_val,
@@ -1059,6 +1266,7 @@ def run_training(cfg: Config) -> Dict[str, Any]:
         "train_size": len(train_dataset),
         "val_size": len(val_dataset),
         "n_concepts": len(concepts),
+        "final_layer": final_layer_summary,
     }
     (run_dir / "summary.json").write_text(json.dumps(result, indent=2))
     return result
