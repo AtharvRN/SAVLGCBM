@@ -137,6 +137,7 @@ class Config:
     warmup_steps: int
     log_every: int
     save_every: int
+    print_config: bool
 
 
 def build_config(args: argparse.Namespace) -> Config:
@@ -186,6 +187,7 @@ def build_config(args: argparse.Namespace) -> Config:
         warmup_steps=args.warmup_steps,
         log_every=args.log_every,
         save_every=args.save_every,
+        print_config=bool(args.print_config),
     )
 
 
