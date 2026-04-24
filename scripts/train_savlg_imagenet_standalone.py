@@ -396,13 +396,15 @@ def split_train_val(
 ) -> Tuple[DatasetView, DatasetView]:
     total = len(dataset)
     indices = list(range(total))
-    if max_train_images > 0:
-        total = min(total, max_train_images)
-        indices = indices[:total]
     n_val = int(round(float(val_split) * len(indices)))
     n_val = min(max(n_val, 1), max(len(indices) - 1, 1))
     generator = random.Random(seed)
     generator.shuffle(indices)
+    if max_train_images > 0:
+        total = min(total, max_train_images)
+        indices = indices[:total]
+        n_val = int(round(float(val_split) * len(indices)))
+        n_val = min(max(n_val, 1), max(len(indices) - 1, 1))
     val_indices = indices[:n_val]
     train_indices = indices[n_val:]
     if max_val_images > 0:
