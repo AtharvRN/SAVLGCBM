@@ -243,6 +243,23 @@ def autocast_context(cfg: Config):
     return torch.autocast(device_type="cuda", dtype=dtype)
 
 
+def reset_cuda_peak_stats_if_needed(cfg: Config) -> None:
+    if str(cfg.device).startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+
+def cuda_peak_stats_mb(cfg: Config) -> Dict[str, float]:
+    if str(cfg.device).startswith("cuda") and torch.cuda.is_available():
+        return {
+            "max_memory_allocated_mb": float(torch.cuda.max_memory_allocated() / (1024 ** 2)),
+            "max_memory_reserved_mb": float(torch.cuda.max_memory_reserved() / (1024 ** 2)),
+        }
+    return {
+        "max_memory_allocated_mb": 0.0,
+        "max_memory_reserved_mb": 0.0,
+    }
+
+
 def format_concept(text: str) -> str:
     text = text.lower()
     for ch in "-,.()":
@@ -774,6 +791,7 @@ def train_one_epoch(
     head.train()
     totals = {"total": 0.0, "global": 0.0, "mask": 0.0, "dice": 0.0, "count": 0}
     start_time = time.perf_counter()
+    reset_cuda_peak_stats_if_needed(cfg)
     for step, batch in enumerate(loader, start=1):
         images = prepare_images(batch["images"], cfg)
         global_targets, idx_pad, mask_pad, valid_pad = build_gdino_targets(
@@ -818,13 +836,16 @@ def train_one_epoch(
             )
     count = max(totals["count"], 1)
     elapsed = time.perf_counter() - start_time
-    return {
+    metrics = {
         "loss": totals["total"] / count,
         "loss_global": totals["global"] / count,
         "loss_mask": totals["mask"] / count,
         "loss_dice": totals["dice"] / count,
         "images_per_second": totals["count"] / max(elapsed, 1e-6),
+        "elapsed_sec": elapsed,
     }
+    metrics.update(cuda_peak_stats_mb(cfg))
+    return metrics
 
 
 @torch.no_grad()
@@ -840,6 +861,7 @@ def evaluate_one_epoch(
     head.eval()
     totals = {"total": 0.0, "global": 0.0, "mask": 0.0, "dice": 0.0, "count": 0}
     start_time = time.perf_counter()
+    reset_cuda_peak_stats_if_needed(cfg)
     for step, batch in enumerate(loader, start=1):
         images = prepare_images(batch["images"], cfg)
         global_targets, idx_pad, mask_pad, valid_pad = build_gdino_targets(
@@ -871,13 +893,16 @@ def evaluate_one_epoch(
             )
     count = max(totals["count"], 1)
     elapsed = time.perf_counter() - start_time
-    return {
+    metrics = {
         "loss": totals["total"] / count,
         "loss_global": totals["global"] / count,
         "loss_mask": totals["mask"] / count,
         "loss_dice": totals["dice"] / count,
         "images_per_second": totals["count"] / max(elapsed, 1e-6),
+        "elapsed_sec": elapsed,
     }
+    metrics.update(cuda_peak_stats_mb(cfg))
+    return metrics
 
 
 def build_run_dir(cfg: Config) -> Path:
@@ -931,6 +956,7 @@ def extract_concept_features(
     targets: List[torch.Tensor] = []
     total = 0
     start_time = time.perf_counter()
+    reset_cuda_peak_stats_if_needed(cfg)
     for step, batch in enumerate(loader, start=1):
         images = prepare_images(batch["images"], cfg)
         with autocast_context(cfg):
@@ -946,6 +972,19 @@ def extract_concept_features(
                 f"n={total} ips={total / max(elapsed, 1e-6):.2f}",
                 flush=True,
             )
+    elapsed = time.perf_counter() - start_time
+    print(
+        json.dumps(
+            {
+                "stage": f"{split_name}_feature_extraction_summary",
+                "n_examples": total,
+                "images_per_second": total / max(elapsed, 1e-6),
+                "elapsed_sec": elapsed,
+                **cuda_peak_stats_mb(cfg),
+            }
+        ),
+        flush=True,
+    )
     return torch.cat(features, dim=0), torch.cat(targets, dim=0)
 
 
@@ -1014,6 +1053,8 @@ def train_sparse_final_layer(
     linear.bias.data.zero_()
 
     metadata = {"max_reg": {"nongrouped": cfg.saga_lam}}
+    reset_cuda_peak_stats_if_needed(cfg)
+    start_time = time.perf_counter()
     output = glm_saga(
         linear,
         train_loader,
@@ -1047,7 +1088,9 @@ def train_sparse_final_layer(
         "val": val_metrics,
         "nnz": int((best["weight"].abs() > 1e-5).sum().item()),
         "total": int(best["weight"].numel()),
+        "elapsed_sec": time.perf_counter() - start_time,
     }
+    payload.update(cuda_peak_stats_mb(cfg))
 
     torch.save(
         {
