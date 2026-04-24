@@ -461,19 +461,38 @@ class MemmapFeatureDataset(Dataset):
         return tensor, target
 
 
-def build_loader(dataset: Dataset, cfg: Config, shuffle: bool, drop_last: bool) -> DataLoader:
+def build_loader(
+    dataset: Dataset,
+    cfg: Config,
+    shuffle: bool,
+    drop_last: bool,
+    *,
+    batch_size: Optional[int] = None,
+    workers: Optional[int] = None,
+    pin_memory: Optional[bool] = None,
+    persistent_workers: Optional[bool] = None,
+    prefetch_factor: Optional[int] = None,
+) -> DataLoader:
+    effective_batch_size = int(cfg.batch_size if batch_size is None else batch_size)
+    effective_workers = int(cfg.workers if workers is None else workers)
+    effective_pin_memory = cfg.pin_memory if pin_memory is None else bool(pin_memory)
     kwargs: Dict[str, Any] = {
         "dataset": dataset,
-        "batch_size": cfg.batch_size,
+        "batch_size": effective_batch_size,
         "shuffle": shuffle,
-        "num_workers": cfg.workers,
-        "pin_memory": cfg.pin_memory,
+        "num_workers": effective_workers,
+        "pin_memory": effective_pin_memory,
         "collate_fn": collate_batch,
         "drop_last": drop_last,
     }
-    if cfg.workers > 0:
-        kwargs["persistent_workers"] = cfg.persistent_workers
-        kwargs["prefetch_factor"] = cfg.prefetch_factor
+    if effective_workers > 0:
+        kwargs["persistent_workers"] = (
+            cfg.persistent_workers if persistent_workers is None else bool(persistent_workers)
+        )
+        kwargs["prefetch_factor"] = max(
+            1,
+            int(cfg.prefetch_factor if prefetch_factor is None else prefetch_factor),
+        )
     return DataLoader(**kwargs)
 
 
@@ -1022,6 +1041,10 @@ def extract_concept_features_to_memmap(
         feature_memmap[offset : offset + batch_size] = batch_features.astype(feature_memmap.dtype, copy=False)
         target_memmap[offset : offset + batch_size] = batch_targets
         offset += batch_size
+        if step % 10 == 0:
+            feature_memmap.flush()
+            target_memmap.flush()
+        del batch_features, batch_targets, feats, outputs, images
         if step % cfg.log_every == 0:
             elapsed = time.perf_counter() - start_time
             print(
@@ -1401,8 +1424,31 @@ def run_training(cfg: Config) -> Dict[str, Any]:
     final_layer_summary: Optional[Dict[str, Any]] = None
     if not cfg.skip_final_layer:
         feature_dir = run_dir / "features"
-        feature_train_loader = build_loader(train_dataset, cfg, shuffle=False, drop_last=False)
-        feature_val_loader = build_loader(val_dataset, cfg, shuffle=False, drop_last=False)
+        feature_batch_size = max(64, min(cfg.batch_size, 256))
+        feature_workers = max(1, min(cfg.workers, 4))
+        feature_prefetch = max(1, min(cfg.prefetch_factor, 2))
+        feature_train_loader = build_loader(
+            train_dataset,
+            cfg,
+            shuffle=False,
+            drop_last=False,
+            batch_size=feature_batch_size,
+            workers=feature_workers,
+            pin_memory=False,
+            persistent_workers=False,
+            prefetch_factor=feature_prefetch,
+        )
+        feature_val_loader = build_loader(
+            val_dataset,
+            cfg,
+            shuffle=False,
+            drop_last=False,
+            batch_size=feature_batch_size,
+            workers=feature_workers,
+            pin_memory=False,
+            persistent_workers=False,
+            prefetch_factor=feature_prefetch,
+        )
         train_feature_path, train_target_path, train_extract_summary = extract_concept_features_to_memmap(
             backbone, head, feature_train_loader, cfg, split_name="train", output_dir=feature_dir
         )
