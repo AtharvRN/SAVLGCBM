@@ -98,6 +98,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--saga_step_size", type=float, default=0.1)
     parser.add_argument("--saga_lam", type=float, default=5e-4)
     parser.add_argument("--saga_n_iters", type=int, default=80)
+    parser.add_argument("--feature_storage_dtype", choices=["fp16", "fp32"], default="fp16")
+    parser.add_argument("--saga_table_device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--print_config", action="store_true")
     return parser.parse_args()
 
@@ -154,6 +156,8 @@ class Config:
     saga_step_size: float
     saga_lam: float
     saga_n_iters: int
+    feature_storage_dtype: str
+    saga_table_device: str
     print_config: bool
 
 
@@ -209,6 +213,8 @@ def build_config(args: argparse.Namespace) -> Config:
         saga_step_size=args.saga_step_size,
         saga_lam=args.saga_lam,
         saga_n_iters=args.saga_n_iters,
+        feature_storage_dtype=args.feature_storage_dtype,
+        saga_table_device=args.saga_table_device,
         print_config=bool(args.print_config),
     )
 
@@ -426,6 +432,35 @@ class IndexedTensorDataset(Dataset):
         return self.features[index], self.targets[index], int(index)
 
 
+class MemmapFeatureDataset(Dataset):
+    def __init__(
+        self,
+        feature_path: Path,
+        target_path: Path,
+        mean: Optional[np.ndarray] = None,
+        std: Optional[np.ndarray] = None,
+        include_index: bool = False,
+    ) -> None:
+        self.features = np.load(feature_path, mmap_mode="r")
+        self.targets = np.load(target_path, mmap_mode="r")
+        self.mean = None if mean is None else np.asarray(mean, dtype=np.float32)
+        self.std = None if std is None else np.asarray(std, dtype=np.float32)
+        self.include_index = include_index
+
+    def __len__(self) -> int:
+        return int(self.features.shape[0])
+
+    def __getitem__(self, index: int):
+        feature = np.asarray(self.features[index], dtype=np.float32)
+        if self.mean is not None and self.std is not None:
+            feature = (feature - self.mean) / self.std
+        tensor = torch.from_numpy(np.ascontiguousarray(feature))
+        target = int(self.targets[index])
+        if self.include_index:
+            return tensor, target, int(index)
+        return tensor, target
+
+
 def build_loader(dataset: Dataset, cfg: Config, shuffle: bool, drop_last: bool) -> DataLoader:
     kwargs: Dict[str, Any] = {
         "dataset": dataset,
@@ -440,6 +475,12 @@ def build_loader(dataset: Dataset, cfg: Config, shuffle: bool, drop_last: bool) 
         kwargs["persistent_workers"] = cfg.persistent_workers
         kwargs["prefetch_factor"] = cfg.prefetch_factor
     return DataLoader(**kwargs)
+
+
+def feature_storage_dtype(cfg: Config) -> np.dtype:
+    if cfg.feature_storage_dtype == "fp32":
+        return np.float32
+    return np.float16
 
 
 def normalize_box(box: Sequence[float], image_size: Tuple[int, int]) -> Optional[Tuple[float, float, float, float]]:
@@ -944,17 +985,22 @@ def save_checkpoint(
 
 
 @torch.no_grad()
-def extract_concept_features(
+def extract_concept_features_to_memmap(
     backbone: nn.Module,
     head: nn.Module,
     loader: DataLoader,
     cfg: Config,
     split_name: str,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    output_dir: Path,
+) -> Tuple[Path, Path, Dict[str, Any]]:
     head.eval()
-    features: List[torch.Tensor] = []
-    targets: List[torch.Tensor] = []
-    total = 0
+    output_dir.mkdir(parents=True, exist_ok=True)
+    total_examples = len(loader.dataset)
+    target_path = output_dir / f"{split_name}_targets.npy"
+    target_memmap = np.lib.format.open_memmap(target_path, mode="w+", dtype=np.int64, shape=(total_examples,))
+    feature_path: Optional[Path] = None
+    feature_memmap: Optional[np.memmap] = None
+    offset = 0
     start_time = time.perf_counter()
     reset_cuda_peak_stats_if_needed(cfg)
     for step, batch in enumerate(loader, start=1):
@@ -962,40 +1008,76 @@ def extract_concept_features(
         with autocast_context(cfg):
             feats = backbone(images)
             outputs = head(feats)
-        features.append(outputs["final_logits"].detach().float().cpu())
-        targets.append(batch["class_ids"].detach().cpu())
-        total += int(images.shape[0])
+        batch_features = outputs["final_logits"].detach().float().cpu().numpy()
+        batch_targets = batch["class_ids"].detach().cpu().numpy().astype(np.int64, copy=False)
+        batch_size = int(batch_features.shape[0])
+        if feature_memmap is None:
+            feature_path = output_dir / f"{split_name}_features.npy"
+            feature_memmap = np.lib.format.open_memmap(
+                feature_path,
+                mode="w+",
+                dtype=feature_storage_dtype(cfg),
+                shape=(total_examples, int(batch_features.shape[1])),
+            )
+        feature_memmap[offset : offset + batch_size] = batch_features.astype(feature_memmap.dtype, copy=False)
+        target_memmap[offset : offset + batch_size] = batch_targets
+        offset += batch_size
         if step % cfg.log_every == 0:
             elapsed = time.perf_counter() - start_time
             print(
                 f"[{split_name}_features] step={step}/{len(loader)} "
-                f"n={total} ips={total / max(elapsed, 1e-6):.2f}",
+                f"n={offset} ips={offset / max(elapsed, 1e-6):.2f}",
                 flush=True,
             )
+    if feature_memmap is None or feature_path is None:
+        raise RuntimeError(f"No features extracted for split {split_name}")
+    feature_memmap.flush()
+    target_memmap.flush()
     elapsed = time.perf_counter() - start_time
-    print(
-        json.dumps(
-            {
-                "stage": f"{split_name}_feature_extraction_summary",
-                "n_examples": total,
-                "images_per_second": total / max(elapsed, 1e-6),
-                "elapsed_sec": elapsed,
-                **cuda_peak_stats_mb(cfg),
-            }
-        ),
-        flush=True,
-    )
-    return torch.cat(features, dim=0), torch.cat(targets, dim=0)
+    summary = {
+        "stage": f"{split_name}_feature_extraction_summary",
+        "n_examples": offset,
+        "n_features": int(feature_memmap.shape[1]),
+        "images_per_second": offset / max(elapsed, 1e-6),
+        "elapsed_sec": elapsed,
+        "feature_path": str(feature_path),
+        "target_path": str(target_path),
+        **cuda_peak_stats_mb(cfg),
+    }
+    print(json.dumps(summary), flush=True)
+    return feature_path, target_path, summary
 
 
-def standardize_features(
-    train_features: torch.Tensor,
-    val_features: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    mean = train_features.mean(dim=0)
-    std = train_features.std(dim=0, unbiased=True)
-    std = torch.where(std > 1e-6, std, torch.ones_like(std))
-    return (train_features - mean) / std, (val_features - mean) / std, mean, std
+def compute_feature_stats_memmap(
+    feature_path: Path,
+    cfg: Config,
+    chunk_size: int = 8192,
+) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    features = np.load(feature_path, mmap_mode="r")
+    n_examples, n_features = int(features.shape[0]), int(features.shape[1])
+    start_time = time.perf_counter()
+    sum_vec = np.zeros((n_features,), dtype=np.float64)
+    sum_sq_vec = np.zeros((n_features,), dtype=np.float64)
+    for start in range(0, n_examples, chunk_size):
+        end = min(start + chunk_size, n_examples)
+        batch = np.asarray(features[start:end], dtype=np.float32)
+        sum_vec += batch.sum(axis=0, dtype=np.float64)
+        sum_sq_vec += np.square(batch, dtype=np.float32).sum(axis=0, dtype=np.float64)
+    mean = sum_vec / max(n_examples, 1)
+    if n_examples > 1:
+        var = (sum_sq_vec - (sum_vec * sum_vec) / n_examples) / (n_examples - 1)
+    else:
+        var = np.ones_like(mean)
+    var = np.maximum(var, 1e-6)
+    std = np.sqrt(var).astype(np.float32)
+    mean = mean.astype(np.float32)
+    summary = {
+        "stage": "train_feature_normalization_summary",
+        "n_examples": n_examples,
+        "n_features": n_features,
+        "elapsed_sec": time.perf_counter() - start_time,
+    }
+    return torch.from_numpy(mean), torch.from_numpy(std), summary
 
 
 def topk_accuracy(logits: torch.Tensor, targets: torch.Tensor, k: int) -> float:
@@ -1008,33 +1090,77 @@ def topk_accuracy(logits: torch.Tensor, targets: torch.Tensor, k: int) -> float:
 @torch.no_grad()
 def evaluate_final_layer(
     linear: nn.Linear,
-    features: torch.Tensor,
-    targets: torch.Tensor,
+    loader: DataLoader,
     device: str,
 ) -> Dict[str, float]:
-    logits = linear(features.to(device))
-    targets_device = targets.to(device)
-    loss = F.cross_entropy(logits, targets_device).item()
-    top1 = topk_accuracy(logits, targets_device, k=1)
-    top5 = topk_accuracy(logits, targets_device, k=5)
-    return {"loss": loss, "top1": top1, "top5": top5, "n": int(targets.shape[0])}
+    linear.eval()
+    total_loss = 0.0
+    total_top1 = 0.0
+    total_top5 = 0.0
+    total_examples = 0
+    for batch in loader:
+        features, targets = batch[0].to(device), batch[1].to(device)
+        logits = linear(features)
+        batch_size = int(targets.shape[0])
+        total_loss += float(F.cross_entropy(logits, targets, reduction="sum").item())
+        total_top1 += topk_accuracy(logits, targets, k=1) * batch_size
+        total_top5 += topk_accuracy(logits, targets, k=5) * batch_size
+        total_examples += batch_size
+    count = max(total_examples, 1)
+    return {
+        "loss": total_loss / count,
+        "top1": total_top1 / count,
+        "top5": total_top5 / count,
+        "n": total_examples,
+    }
 
 
 def train_sparse_final_layer(
-    train_features: torch.Tensor,
-    train_targets: torch.Tensor,
-    val_features: torch.Tensor,
-    val_targets: torch.Tensor,
+    train_feature_path: Path,
+    train_target_path: Path,
+    val_feature_path: Path,
+    val_target_path: Path,
+    feature_mean: torch.Tensor,
+    feature_std: torch.Tensor,
     cfg: Config,
     n_classes: int,
     run_dir: Path,
 ) -> Dict[str, Any]:
-    train_dataset = IndexedTensorDataset(train_features, train_targets)
-    val_dataset = torch.utils.data.TensorDataset(val_features, val_targets)
+    feature_mean_np = feature_mean.cpu().numpy()
+    feature_std_np = feature_std.cpu().numpy()
+    train_dataset = MemmapFeatureDataset(
+        train_feature_path,
+        train_target_path,
+        mean=feature_mean_np,
+        std=feature_std_np,
+        include_index=True,
+    )
+    train_eval_dataset = MemmapFeatureDataset(
+        train_feature_path,
+        train_target_path,
+        mean=feature_mean_np,
+        std=feature_std_np,
+        include_index=False,
+    )
+    val_dataset = MemmapFeatureDataset(
+        val_feature_path,
+        val_target_path,
+        mean=feature_mean_np,
+        std=feature_std_np,
+        include_index=False,
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.saga_batch_size,
         shuffle=True,
+        num_workers=0,
+        pin_memory=cfg.pin_memory,
+        drop_last=False,
+    )
+    train_eval_loader = DataLoader(
+        train_eval_dataset,
+        batch_size=cfg.saga_batch_size,
+        shuffle=False,
         num_workers=0,
         pin_memory=cfg.pin_memory,
         drop_last=False,
@@ -1048,7 +1174,7 @@ def train_sparse_final_layer(
         drop_last=False,
     )
 
-    linear = nn.Linear(int(train_features.shape[1]), int(n_classes), bias=True).to(cfg.device)
+    linear = nn.Linear(int(train_dataset.features.shape[1]), int(n_classes), bias=True).to(cfg.device)
     linear.weight.data.zero_()
     linear.bias.data.zero_()
 
@@ -1061,6 +1187,7 @@ def train_sparse_final_layer(
         cfg.saga_step_size,
         cfg.saga_n_iters,
         0.99,
+        table_device=cfg.saga_table_device,
         epsilon=1,
         k=1,
         val_loader=val_loader,
@@ -1073,8 +1200,8 @@ def train_sparse_final_layer(
     best = output["best"]
     linear.load_state_dict({"weight": best["weight"], "bias": best["bias"]})
 
-    train_metrics = evaluate_final_layer(linear, train_features, train_targets, cfg.device)
-    val_metrics = evaluate_final_layer(linear, val_features, val_targets, cfg.device)
+    train_metrics = evaluate_final_layer(linear, train_eval_loader, cfg.device)
+    val_metrics = evaluate_final_layer(linear, val_loader, cfg.device)
 
     payload = {
         "best": {
@@ -1273,28 +1400,46 @@ def run_training(cfg: Config) -> Dict[str, Any]:
 
     final_layer_summary: Optional[Dict[str, Any]] = None
     if not cfg.skip_final_layer:
-        train_features, train_targets = extract_concept_features(
-            backbone, head, train_loader, cfg, split_name="train"
+        feature_dir = run_dir / "features"
+        feature_train_loader = build_loader(train_dataset, cfg, shuffle=False, drop_last=False)
+        feature_val_loader = build_loader(val_dataset, cfg, shuffle=False, drop_last=False)
+        train_feature_path, train_target_path, train_extract_summary = extract_concept_features_to_memmap(
+            backbone, head, feature_train_loader, cfg, split_name="train", output_dir=feature_dir
         )
-        val_features, val_targets = extract_concept_features(
-            backbone, head, val_loader, cfg, split_name="val"
+        val_feature_path, val_target_path, val_extract_summary = extract_concept_features_to_memmap(
+            backbone, head, feature_val_loader, cfg, split_name="val", output_dir=feature_dir
         )
-        train_features, val_features, feature_mean, feature_std = standardize_features(
-            train_features, val_features
+        feature_mean, feature_std, norm_summary = compute_feature_stats_memmap(
+            train_feature_path, cfg
         )
+        normalization_payload = {
+            "mean": feature_mean,
+            "std": feature_std,
+            "train_extraction": train_extract_summary,
+            "val_extraction": val_extract_summary,
+            "normalization": norm_summary,
+        }
         torch.save(
-            {"mean": feature_mean, "std": feature_std},
+            normalization_payload,
             run_dir / "final_layer_normalization.pt",
         )
         final_layer_summary = train_sparse_final_layer(
-            train_features=train_features,
-            train_targets=train_targets,
-            val_features=val_features,
-            val_targets=val_targets,
+            train_feature_path=train_feature_path,
+            train_target_path=train_target_path,
+            val_feature_path=val_feature_path,
+            val_target_path=val_target_path,
+            feature_mean=feature_mean,
+            feature_std=feature_std,
             cfg=cfg,
             n_classes=len(train_dataset_full.dataset.classes),
             run_dir=run_dir,
         )
+        final_layer_summary["feature_extraction"] = {
+            "train": train_extract_summary,
+            "val": val_extract_summary,
+            "normalization": norm_summary,
+        }
+        (run_dir / "final_layer_summary.json").write_text(json.dumps(final_layer_summary, indent=2))
         print(
             f"[final_layer] train_top1={final_layer_summary['train']['top1']:.4f} "
             f"val_top1={final_layer_summary['val']['top1']:.4f} "
