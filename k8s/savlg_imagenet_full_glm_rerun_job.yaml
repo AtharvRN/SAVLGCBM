@@ -89,6 +89,7 @@ spec:
               if [[ -f "${SOURCE_RUN}/concepts.txt" ]]; then
                 cp "${SOURCE_RUN}/concepts.txt" "${LOCAL_SOURCE_RUN}/"
               fi
+              printf '%s\n' "${SOURCE_RUN}" > "${LOCAL_SOURCE_RUN}/source_run_dir.txt"
               du -sh "${LOCAL_SOURCE_RUN}" || true
 
               python -u scripts/train_savlg_imagenet_standalone.py \

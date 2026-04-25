@@ -1602,6 +1602,12 @@ def run_glm_only(cfg: Config) -> Dict[str, Any]:
     source_run_dir = Path(cfg.reuse_run_dir).resolve()
     if not source_run_dir.is_dir():
         raise FileNotFoundError(f"Missing reuse_run_dir: {source_run_dir}")
+    original_source_run_dir = source_run_dir
+    original_source_hint = source_run_dir / "source_run_dir.txt"
+    if original_source_hint.exists():
+        hinted_source_run_dir = Path(original_source_hint.read_text().strip()).resolve()
+        if hinted_source_run_dir.is_dir():
+            original_source_run_dir = hinted_source_run_dir
 
     train_feature_path = source_run_dir / "features" / "train_features.npy"
     train_target_path = source_run_dir / "features" / "train_targets.npy"
@@ -1622,8 +1628,8 @@ def run_glm_only(cfg: Config) -> Dict[str, Any]:
 
     run_dir = build_run_dir(cfg)
     (run_dir / "config.json").write_text(json.dumps(asdict(cfg), indent=2))
-    (run_dir / "source_run_dir.txt").write_text(f"{source_run_dir}\n")
-    source_concepts = source_run_dir / "concepts.txt"
+    (run_dir / "source_run_dir.txt").write_text(f"{original_source_run_dir}\n")
+    source_concepts = original_source_run_dir / "concepts.txt"
     if source_concepts.exists():
         (run_dir / "concepts.txt").write_text(source_concepts.read_text())
 
@@ -1631,7 +1637,7 @@ def run_glm_only(cfg: Config) -> Dict[str, Any]:
         {
             "mean": feature_mean,
             "std": feature_std,
-            "source_run_dir": str(source_run_dir),
+            "source_run_dir": str(original_source_run_dir),
             "normalization": normalization_summary,
         },
         run_dir / "final_layer_normalization.pt",
@@ -1652,7 +1658,7 @@ def run_glm_only(cfg: Config) -> Dict[str, Any]:
 
     result = {
         "mode": "glm_only",
-        "source_run_dir": str(source_run_dir),
+        "source_run_dir": str(original_source_run_dir),
         "run_dir": str(run_dir),
         "n_classes": n_classes,
         "final_layer": final_layer_summary,

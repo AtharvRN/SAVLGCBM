@@ -61,9 +61,13 @@ spec:
 
               RUN_BASE=/persist/savlg_imagenet_standalone_runs
               ARTIFACT_DIR="$(cat "${RUN_BASE}/LATEST_RUN_FULL_GLM_RERUN.txt")"
+              ORIGINAL_SOURCE_RUN=/persist/savlg_imagenet_standalone_runs/savlg_imagenet_full_1ep_20260424T204833Z_savlg-imagenet-local-1ep-gtlt9
               SOURCE_RUN_DIR="${ARTIFACT_DIR}"
               if [[ -f "${ARTIFACT_DIR}/source_run_dir.txt" ]]; then
                 SOURCE_RUN_DIR="$(cat "${ARTIFACT_DIR}/source_run_dir.txt")"
+              fi
+              if [[ ! -d "${SOURCE_RUN_DIR}" ]]; then
+                SOURCE_RUN_DIR="${ORIGINAL_SOURCE_RUN}"
               fi
               test -d "${ARTIFACT_DIR}"
               test -d "${SOURCE_RUN_DIR}"
