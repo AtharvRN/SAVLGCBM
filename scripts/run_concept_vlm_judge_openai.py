@@ -372,14 +372,23 @@ def _summarize(rows: list[dict[str, Any]], model: str, tasks_jsonl: Path) -> dic
     }
     usage_totals: dict[str, Any] = {}
     usage_rows = 0
-    for row in rows:
+    usage_responses = 0
+    seen_usage_response_ids: set[str] = set()
+    for idx, row in enumerate(rows):
         usage = row.get("openai_usage")
         if isinstance(usage, dict):
-            _accumulate_usage(usage_totals, usage)
             usage_rows += 1
+            response_id = row.get("openai_response_id")
+            dedupe_key = str(response_id) if response_id else f"row:{idx}"
+            if dedupe_key in seen_usage_response_ids:
+                continue
+            seen_usage_response_ids.add(dedupe_key)
+            _accumulate_usage(usage_totals, usage)
+            usage_responses += 1
     if usage_totals:
         output["usage_totals"] = usage_totals
         output["metadata"]["num_rows_with_usage"] = usage_rows
+        output["metadata"]["num_unique_usage_responses"] = usage_responses
     if rows and all("concept_present" in row["judge"] for row in rows):
         presence = Counter(row["judge"]["concept_present"] for row in rows)
         mean_presence_conf = sum(float(row["judge"]["concept_present_confidence"]) for row in rows) / len(rows)
