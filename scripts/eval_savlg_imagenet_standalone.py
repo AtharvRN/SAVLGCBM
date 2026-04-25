@@ -36,8 +36,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_run_config(artifact_dir: Path, args: argparse.Namespace) -> Config:
-    payload = json.loads((artifact_dir / "config.json").read_text())
+def resolve_source_run_dir(artifact_dir: Path) -> Path:
+    source_run_file = artifact_dir / "source_run_dir.txt"
+    if source_run_file.exists():
+        source_run_dir = Path(source_run_file.read_text().strip()).resolve()
+        if source_run_dir.is_dir():
+            return source_run_dir
+    return artifact_dir
+
+
+def load_run_config(config_dir: Path, args: argparse.Namespace) -> Config:
+    payload = json.loads((config_dir / "config.json").read_text())
     payload.setdefault("feature_storage_dtype", "fp16")
     payload.setdefault("saga_table_device", "cpu")
     payload["device"] = args.device
@@ -133,13 +142,14 @@ def main() -> None:
     artifact_dir = Path(args.artifact_dir).resolve()
     val_root = Path(args.val_root).resolve()
     output_json = Path(args.output_json).resolve() if args.output_json else artifact_dir / "full_val_eval.json"
+    source_run_dir = resolve_source_run_dir(artifact_dir)
 
-    cfg = load_run_config(artifact_dir, args)
+    cfg = load_run_config(source_run_dir, args)
     configure_runtime(cfg)
 
-    concepts = [line.strip() for line in (artifact_dir / "concepts.txt").read_text().splitlines() if line.strip()]
+    concepts = [line.strip() for line in (source_run_dir / "concepts.txt").read_text().splitlines() if line.strip()]
     backbone, head = build_model(cfg, n_concepts=len(concepts))
-    head.load_state_dict(torch.load(artifact_dir / "concept_head_best.pt", map_location=cfg.device))
+    head.load_state_dict(torch.load(source_run_dir / "concept_head_best.pt", map_location=cfg.device))
 
     linear_payload = torch.load(artifact_dir / "final_layer_glm_saga.pt", map_location="cpu")
     normalization_payload = torch.load(artifact_dir / "final_layer_normalization.pt", map_location="cpu")
