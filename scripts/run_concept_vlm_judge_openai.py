@@ -301,10 +301,14 @@ def main() -> None:
                     out_f.write(json.dumps(record) + "\n")
                     out_f.flush()
                     existing[task["task_id"]] = record
+                    judge = record["judge"]
+                    status_parts = [f"[{idx}/{len(pending)}] judged task_id={task['task_id']}"]
+                    if "concept_present" in judge:
+                        status_parts.append(f"present={judge['concept_present']}")
+                    if "region_matches_concept" in judge:
+                        status_parts.append(f"region={judge['region_matches_concept']}")
                     print(
-                        f"[{idx}/{len(pending)}] judged task_id={task['task_id']} "
-                        f"present={record['judge']['concept_present']} "
-                        f"region={record['judge']['region_matches_concept']}",
+                        " ".join(status_parts),
                         flush=True,
                     )
                     if args.sleep_seconds > 0:
