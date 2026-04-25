@@ -15,7 +15,7 @@ import json
 import mimetypes
 import os
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,17 @@ class SpatialFaithfulnessDecision(BaseModel):
     region_matches_concept: str = Field(pattern="^(yes|partial|no|unsure)$")
     region_matches_concept_confidence: float = Field(ge=0.0, le=1.0)
     rationale_short: str
+
+
+class BatchedConceptPresenceDecision(BaseModel):
+    task_id: str
+    concept_present: str = Field(pattern="^(yes|no|unsure)$")
+    concept_present_confidence: float = Field(ge=0.0, le=1.0)
+    rationale_short: str
+
+
+class BatchedConceptPresenceResponse(BaseModel):
+    judgments: list[BatchedConceptPresenceDecision]
 
 
 def parse_args() -> argparse.Namespace:
@@ -109,6 +120,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Optional filter to run only task IDs with this prefix.",
+    )
+    parser.add_argument(
+        "--concepts-per-request",
+        type=int,
+        default=1,
+        help="For concept_presence tasks, batch up to this many concepts from the same image into one request.",
     )
     return parser.parse_args()
 
@@ -202,6 +219,56 @@ def _call_openai(
     return parsed, response
 
 
+def _call_openai_batched_concept_presence(
+    client: OpenAI,
+    model: str,
+    tasks: list[dict[str, Any]],
+    base_dir: Path,
+) -> tuple[BatchedConceptPresenceResponse, Any]:
+    image_path = _resolve_path(base_dir, tasks[0]["image_file"])
+    model_name = tasks[0].get("model_name", "unknown")
+    lines = [
+        "You are evaluating concept presence for one image.",
+        "",
+        f"Model: {model_name}",
+        "",
+        "For each candidate concept below, decide whether the concept is visibly present anywhere in the image.",
+        "Do not infer from class label alone. Use only visible evidence in the image.",
+        'Use "unsure" when the concept is subtle, ambiguous, occluded, or resolution is insufficient.',
+        "",
+        "Return one judgment per task_id.",
+        "",
+        "Concept candidates:",
+    ]
+    for task in tasks:
+        lines.append(f"- {task['task_id']}: {task['concept_name']}")
+    prompt = "\n".join(lines)
+    response = client.responses.parse(
+        model=model,
+        input=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_text", "text": "Original image:"},
+                    {
+                        "type": "input_image",
+                        "image_url": _image_to_data_url(image_path),
+                    },
+                ],
+            },
+        ],
+        text_format=BatchedConceptPresenceResponse,
+    )
+    parsed = response.output_parsed
+    if parsed is None:
+        raise RuntimeError(
+            f"OpenAI batched response for image_file={tasks[0]['image_file']} did not produce parsed output."
+        )
+    return parsed, response
+
+
 def _infer_task_type(task: dict[str, Any]) -> str:
     task_type = task.get("task_type")
     if task_type:
@@ -223,6 +290,26 @@ def _text_format_for_task_type(task_type: str):
     if task_type == "spatial_faithfulness":
         return SpatialFaithfulnessDecision
     return JudgeDecision
+
+
+def _group_concept_presence_tasks(
+    tasks: list[dict[str, Any]],
+    concepts_per_request: int,
+) -> list[list[dict[str, Any]]]:
+    grouped: dict[tuple[str, str | None, str], list[dict[str, Any]]] = defaultdict(list)
+    for task in tasks:
+        key = (
+            task["image_file"],
+            task.get("overlay_file"),
+            str(task.get("model_name", "")),
+        )
+        grouped[key].append(task)
+    batches: list[list[dict[str, Any]]] = []
+    for key in sorted(grouped):
+        group = sorted(grouped[key], key=lambda row: str(row["task_id"]))
+        for start in range(0, len(group), concepts_per_request):
+            batches.append(group[start : start + concepts_per_request])
+    return batches
 
 
 def _summarize(rows: list[dict[str, Any]], model: str, tasks_jsonl: Path) -> dict[str, Any]:
@@ -281,51 +368,117 @@ def main() -> None:
     client = OpenAI()
     base_dir = args.tasks_jsonl.parent
 
+    if args.concepts_per_request < 1:
+        raise ValueError("--concepts-per-request must be >= 1")
+
     with output_jsonl.open("a") as out_f:
-        for idx, task in enumerate(pending, start=1):
-            last_error: Exception | None = None
-            for attempt in range(1, args.max_retries + 1):
-                try:
-                    parsed, response = _call_openai(client, args.model, task, base_dir)
-                    record = {
-                        "task_id": task["task_id"],
-                        "task_type": _infer_task_type(task),
-                        "model": args.model,
-                        "image_file": task["image_file"],
-                        "overlay_file": task.get("overlay_file"),
-                        "concept_name": task["concept_name"],
-                        "metadata": task["metadata"],
-                        "judge": parsed.model_dump(),
-                        "openai_response_id": getattr(response, "id", None),
-                    }
-                    out_f.write(json.dumps(record) + "\n")
-                    out_f.flush()
-                    existing[task["task_id"]] = record
-                    judge = record["judge"]
-                    status_parts = [f"[{idx}/{len(pending)}] judged task_id={task['task_id']}"]
-                    if "concept_present" in judge:
-                        status_parts.append(f"present={judge['concept_present']}")
-                    if "region_matches_concept" in judge:
-                        status_parts.append(f"region={judge['region_matches_concept']}")
-                    print(
-                        " ".join(status_parts),
-                        flush=True,
-                    )
-                    if args.sleep_seconds > 0:
-                        time.sleep(args.sleep_seconds)
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    print(
-                        f"[{idx}/{len(pending)}] attempt {attempt}/{args.max_retries} failed "
-                        f"for task_id={task['task_id']}: {exc!r}",
-                        flush=True,
-                    )
-                    if attempt == args.max_retries:
-                        raise
-                    time.sleep(max(1.0, args.sleep_seconds))
-            if last_error is not None and task["task_id"] not in existing:
-                raise last_error
+        can_batch = (
+            args.concepts_per_request > 1
+            and pending
+            and all(_infer_task_type(task) == "concept_presence" for task in pending)
+        )
+        if can_batch:
+            batches = _group_concept_presence_tasks(pending, args.concepts_per_request)
+            print(
+                f"Batching concept_presence tasks by image with up to {args.concepts_per_request} concepts/request. "
+                f"batches={len(batches)}",
+                flush=True,
+            )
+            for idx, batch in enumerate(batches, start=1):
+                last_error: Exception | None = None
+                for attempt in range(1, args.max_retries + 1):
+                    try:
+                        parsed, response = _call_openai_batched_concept_presence(client, args.model, batch, base_dir)
+                        judgments = {item.task_id: item for item in parsed.judgments}
+                        expected = {task["task_id"] for task in batch}
+                        received = set(judgments)
+                        if received != expected:
+                            missing = sorted(expected - received)
+                            extra = sorted(received - expected)
+                            raise RuntimeError(
+                                f"Batched response mismatch for image_file={batch[0]['image_file']}: "
+                                f"missing={missing} extra={extra}"
+                            )
+                        for task in batch:
+                            item = judgments[task["task_id"]]
+                            record = {
+                                "task_id": task["task_id"],
+                                "task_type": _infer_task_type(task),
+                                "model": args.model,
+                                "image_file": task["image_file"],
+                                "overlay_file": task.get("overlay_file"),
+                                "concept_name": task["concept_name"],
+                                "metadata": task["metadata"],
+                                "judge": item.model_dump(exclude={"task_id"}),
+                                "openai_response_id": getattr(response, "id", None),
+                            }
+                            out_f.write(json.dumps(record) + "\n")
+                            existing[task["task_id"]] = record
+                        out_f.flush()
+                        print(
+                            f"[{idx}/{len(batches)}] judged image={batch[0]['image_file']} tasks={len(batch)}",
+                            flush=True,
+                        )
+                        if args.sleep_seconds > 0:
+                            time.sleep(args.sleep_seconds)
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        print(
+                            f"[{idx}/{len(batches)}] attempt {attempt}/{args.max_retries} failed "
+                            f"for image={batch[0]['image_file']}: {exc!r}",
+                            flush=True,
+                        )
+                        if attempt == args.max_retries:
+                            raise
+                        time.sleep(max(1.0, args.sleep_seconds))
+                if last_error is not None and any(task["task_id"] not in existing for task in batch):
+                    raise last_error
+        else:
+            for idx, task in enumerate(pending, start=1):
+                last_error: Exception | None = None
+                for attempt in range(1, args.max_retries + 1):
+                    try:
+                        parsed, response = _call_openai(client, args.model, task, base_dir)
+                        record = {
+                            "task_id": task["task_id"],
+                            "task_type": _infer_task_type(task),
+                            "model": args.model,
+                            "image_file": task["image_file"],
+                            "overlay_file": task.get("overlay_file"),
+                            "concept_name": task["concept_name"],
+                            "metadata": task["metadata"],
+                            "judge": parsed.model_dump(),
+                            "openai_response_id": getattr(response, "id", None),
+                        }
+                        out_f.write(json.dumps(record) + "\n")
+                        out_f.flush()
+                        existing[task["task_id"]] = record
+                        judge = record["judge"]
+                        status_parts = [f"[{idx}/{len(pending)}] judged task_id={task['task_id']}"]
+                        if "concept_present" in judge:
+                            status_parts.append(f"present={judge['concept_present']}")
+                        if "region_matches_concept" in judge:
+                            status_parts.append(f"region={judge['region_matches_concept']}")
+                        print(
+                            " ".join(status_parts),
+                            flush=True,
+                        )
+                        if args.sleep_seconds > 0:
+                            time.sleep(args.sleep_seconds)
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        print(
+                            f"[{idx}/{len(pending)}] attempt {attempt}/{args.max_retries} failed "
+                            f"for task_id={task['task_id']}: {exc!r}",
+                            flush=True,
+                        )
+                        if attempt == args.max_retries:
+                            raise
+                        time.sleep(max(1.0, args.sleep_seconds))
+                if last_error is not None and task["task_id"] not in existing:
+                    raise last_error
 
     ordered = [existing[task["task_id"]] for task in tasks if task["task_id"] in existing]
     summary = _summarize(ordered, args.model, args.tasks_jsonl)
