@@ -157,6 +157,46 @@ def _load_existing(output_jsonl: Path, overwrite: bool) -> dict[str, dict[str, A
     return existing
 
 
+def _to_jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(v) for v in value]
+    if hasattr(value, "model_dump"):
+        return _to_jsonable(value.model_dump())
+    if hasattr(value, "dict"):
+        return _to_jsonable(value.dict())
+    if hasattr(value, "__dict__"):
+        return _to_jsonable(vars(value))
+    return str(value)
+
+
+def _extract_usage(response: Any) -> dict[str, Any] | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    usage_json = _to_jsonable(usage)
+    return usage_json if isinstance(usage_json, dict) else {"raw": usage_json}
+
+
+def _accumulate_usage(totals: dict[str, Any], usage: dict[str, Any]) -> None:
+    for key, value in usage.items():
+        if isinstance(value, dict):
+            child = totals.setdefault(key, {})
+            if isinstance(child, dict):
+                _accumulate_usage(child, value)
+            else:
+                totals[key] = _to_jsonable(value)
+        elif isinstance(value, bool):
+            totals[key] = int(totals.get(key, 0)) + int(value)
+        elif isinstance(value, (int, float)):
+            totals[key] = totals.get(key, 0) + value
+        elif key not in totals:
+            totals[key] = value
+
+
 def _image_to_data_url(path: Path) -> str:
     mime, _ = mimetypes.guess_type(path.name)
     if mime is None:
@@ -315,15 +355,31 @@ def _group_concept_presence_tasks(
 def _summarize(rows: list[dict[str, Any]], model: str, tasks_jsonl: Path) -> dict[str, Any]:
     task_types = Counter(row.get("task_type", _infer_task_type(row)) for row in rows)
     annotation_present = Counter(str(bool(row["metadata"]["annotation_present"])) for row in rows)
+    response_ids = {
+        row.get("openai_response_id")
+        for row in rows
+        if row.get("openai_response_id")
+    }
     output = {
         "metadata": {
             "model": model,
             "tasks_jsonl": str(tasks_jsonl),
             "num_tasks_judged": len(rows),
             "task_type_counts": dict(sorted(task_types.items())),
+            "num_unique_openai_responses": len(response_ids),
         },
         "annotation_present_counts": dict(sorted(annotation_present.items())),
     }
+    usage_totals: dict[str, Any] = {}
+    usage_rows = 0
+    for row in rows:
+        usage = row.get("openai_usage")
+        if isinstance(usage, dict):
+            _accumulate_usage(usage_totals, usage)
+            usage_rows += 1
+    if usage_totals:
+        output["usage_totals"] = usage_totals
+        output["metadata"]["num_rows_with_usage"] = usage_rows
     if rows and all("concept_present" in row["judge"] for row in rows):
         presence = Counter(row["judge"]["concept_present"] for row in rows)
         mean_presence_conf = sum(float(row["judge"]["concept_present_confidence"]) for row in rows) / len(rows)
@@ -411,6 +467,7 @@ def main() -> None:
                                 "metadata": task["metadata"],
                                 "judge": item.model_dump(exclude={"task_id"}),
                                 "openai_response_id": getattr(response, "id", None),
+                                "openai_usage": _extract_usage(response),
                             }
                             out_f.write(json.dumps(record) + "\n")
                             existing[task["task_id"]] = record
@@ -450,6 +507,7 @@ def main() -> None:
                             "metadata": task["metadata"],
                             "judge": parsed.model_dump(),
                             "openai_response_id": getattr(response, "id", None),
+                            "openai_usage": _extract_usage(response),
                         }
                         out_f.write(json.dumps(record) + "\n")
                         out_f.flush()
