@@ -43,6 +43,18 @@ class JudgeDecision(BaseModel):
     rationale_short: str
 
 
+class ConceptPresenceDecision(BaseModel):
+    concept_present: str = Field(pattern="^(yes|no|unsure)$")
+    concept_present_confidence: float = Field(ge=0.0, le=1.0)
+    rationale_short: str
+
+
+class SpatialFaithfulnessDecision(BaseModel):
+    region_matches_concept: str = Field(pattern="^(yes|partial|no|unsure)$")
+    region_matches_concept_confidence: float = Field(ge=0.0, le=1.0)
+    rationale_short: str
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -148,33 +160,41 @@ def _call_openai(
     model: str,
     task: dict[str, Any],
     base_dir: Path,
-) -> tuple[JudgeDecision, Any]:
+) -> tuple[Any, Any]:
     image_path = _resolve_path(base_dir, task["image_file"])
-    overlay_path = _resolve_path(base_dir, task["overlay_file"])
-
+    overlay_file = task.get("overlay_file")
+    overlay_path = _resolve_path(base_dir, overlay_file) if overlay_file else None
     prompt = task["prompt_template"].strip()
+    task_type = _infer_task_type(task)
+    text_format = _text_format_for_task_type(task_type)
+    user_content = [
+        {"type": "input_text", "text": prompt},
+        {"type": "input_text", "text": "Original image:"},
+        {
+            "type": "input_image",
+            "image_url": _image_to_data_url(image_path),
+        },
+    ]
+    if overlay_path is not None:
+        user_content.extend(
+            [
+                {"type": "input_text", "text": "Model heatmap overlay for the same image-concept pair:"},
+                {
+                    "type": "input_image",
+                    "image_url": _image_to_data_url(overlay_path),
+                },
+            ]
+        )
     response = client.responses.parse(
         model=model,
         input=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt},
-                    {"type": "input_text", "text": "Original image:"},
-                    {
-                        "type": "input_image",
-                        "image_url": _image_to_data_url(image_path),
-                    },
-                    {"type": "input_text", "text": "Model heatmap overlay for the same image-concept pair:"},
-                    {
-                        "type": "input_image",
-                        "image_url": _image_to_data_url(overlay_path),
-                    },
-                ],
+                "content": user_content,
             },
         ],
-        text_format=JudgeDecision,
+        text_format=text_format,
     )
     parsed = response.output_parsed
     if parsed is None:
@@ -182,34 +202,52 @@ def _call_openai(
     return parsed, response
 
 
+def _infer_task_type(task: dict[str, Any]) -> str:
+    task_type = task.get("task_type")
+    if task_type:
+        return str(task_type)
+    schema = task.get("expected_response_schema") or {}
+    required = set(schema.get("required", []))
+    if "concept_present" in required and "region_matches_concept" in required:
+        return "legacy_joint"
+    if "region_matches_concept" in required:
+        return "spatial_faithfulness"
+    if "concept_present" in required:
+        return "concept_presence"
+    return "legacy_joint"
+
+
+def _text_format_for_task_type(task_type: str):
+    if task_type == "concept_presence":
+        return ConceptPresenceDecision
+    if task_type == "spatial_faithfulness":
+        return SpatialFaithfulnessDecision
+    return JudgeDecision
+
+
 def _summarize(rows: list[dict[str, Any]], model: str, tasks_jsonl: Path) -> dict[str, Any]:
-    presence = Counter(row["judge"]["concept_present"] for row in rows)
-    region = Counter(row["judge"]["region_matches_concept"] for row in rows)
+    task_types = Counter(row.get("task_type", _infer_task_type(row)) for row in rows)
     annotation_present = Counter(str(bool(row["metadata"]["annotation_present"])) for row in rows)
-
-    mean_presence_conf = (
-        sum(float(row["judge"]["concept_present_confidence"]) for row in rows) / len(rows)
-        if rows
-        else 0.0
-    )
-    mean_region_conf = (
-        sum(float(row["judge"]["region_matches_concept_confidence"]) for row in rows) / len(rows)
-        if rows
-        else 0.0
-    )
-
-    return {
+    output = {
         "metadata": {
             "model": model,
             "tasks_jsonl": str(tasks_jsonl),
             "num_tasks_judged": len(rows),
+            "task_type_counts": dict(sorted(task_types.items())),
         },
-        "concept_present_counts": dict(sorted(presence.items())),
-        "region_match_counts": dict(sorted(region.items())),
         "annotation_present_counts": dict(sorted(annotation_present.items())),
-        "mean_concept_present_confidence": mean_presence_conf,
-        "mean_region_matches_concept_confidence": mean_region_conf,
     }
+    if rows and all("concept_present" in row["judge"] for row in rows):
+        presence = Counter(row["judge"]["concept_present"] for row in rows)
+        mean_presence_conf = sum(float(row["judge"]["concept_present_confidence"]) for row in rows) / len(rows)
+        output["concept_present_counts"] = dict(sorted(presence.items()))
+        output["mean_concept_present_confidence"] = mean_presence_conf
+    if rows and all("region_matches_concept" in row["judge"] for row in rows):
+        region = Counter(row["judge"]["region_matches_concept"] for row in rows)
+        mean_region_conf = sum(float(row["judge"]["region_matches_concept_confidence"]) for row in rows) / len(rows)
+        output["region_match_counts"] = dict(sorted(region.items()))
+        output["mean_region_matches_concept_confidence"] = mean_region_conf
+    return output
 
 
 def main() -> None:
@@ -251,9 +289,10 @@ def main() -> None:
                     parsed, response = _call_openai(client, args.model, task, base_dir)
                     record = {
                         "task_id": task["task_id"],
+                        "task_type": _infer_task_type(task),
                         "model": args.model,
                         "image_file": task["image_file"],
-                        "overlay_file": task["overlay_file"],
+                        "overlay_file": task.get("overlay_file"),
                         "concept_name": task["concept_name"],
                         "metadata": task["metadata"],
                         "judge": parsed.model_dump(),

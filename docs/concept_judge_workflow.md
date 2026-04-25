@@ -1,6 +1,9 @@
 # Concept Judge Workflow
 
-This workflow prepares a **machine-judge / later human-judge** subset for concept-level evaluation.
+This workflow prepares **machine-judge / later human-judge** subsets for two distinct evaluations:
+
+1. **Concept presence**
+2. **Spatial faithfulness**
 
 ## Goal
 
@@ -8,21 +11,50 @@ For a fixed checkpoint, export:
 
 - a subset of images
 - the top positively contributing and positively activated concepts for each image
-- the corresponding native concept-map overlays
+- optionally, the corresponding native concept-map overlays
 - a judge task file for evaluating:
   - whether the concept is actually present in the image
-  - whether the highlighted region corresponds to the concept
+  - and, for spatial models, whether the highlighted region corresponds to the concept
 
 This is a **proxy evaluation** when full human labeling is not yet available.
 
-## What the export script does
+## Export scripts
 
-Use `scripts/export_concept_judge_subset.py`.
+### 1. Concept presence
+
+Use `scripts/export_concept_presence_subset.py`.
+
+Supported checkpoints:
+
+- `lf_cbm`
+- `vlg_cbm`
+- `salf_cbm`
+- `savlg_cbm`
+
+This export saves:
+
+- original images
+- top concept candidates
+- judge tasks asking only whether the concept is present in the image
+
+### 2. Spatial faithfulness
+
+Use `scripts/export_spatial_judge_subset.py`.
 
 Supported checkpoints:
 
 - `salf_cbm`
 - `savlg_cbm`
+
+This export saves:
+
+- original images
+- native maps
+- upsampled maps
+- heatmap overlays
+- judge tasks asking whether the highlighted region corresponds to the concept
+
+## What the exports do
 
 For each selected image:
 
@@ -37,9 +69,10 @@ For each selected image:
    - positive activation
 5. save, for each selected concept:
    - original image
-   - native map (`.npy`)
-   - upsampled normalized map (`.npy`)
-   - heatmap overlay (`.png`)
+   - and for spatial export only:
+     - native map (`.npy`)
+     - upsampled normalized map (`.npy`)
+     - heatmap overlay (`.png`)
 
 The output also includes:
 
@@ -48,13 +81,24 @@ The output also includes:
 - `judge_prompt_template.txt`
 - `judge_response_schema.json`
 
-## Recommended first-pass export
+## Recommended first-pass exports
 
 ```bash
-python scripts/export_concept_judge_subset.py \
+python scripts/export_concept_presence_subset.py \
   --load_path /path/to/checkpoint \
   --annotation_dir /path/to/annotations \
-  --output_dir results/concept_judge_subset/example_run \
+  --output_dir results/concept_presence_subset/example_run \
+  --num_images 500 \
+  --topk_concepts 5 \
+  --class_source pred \
+  --selection random
+```
+
+```bash
+python scripts/export_spatial_judge_subset.py \
+  --load_path /path/to/checkpoint \
+  --annotation_dir /path/to/annotations \
+  --output_dir results/spatial_judge_subset/example_run \
   --num_images 500 \
   --topk_concepts 5 \
   --class_source pred \
@@ -65,26 +109,34 @@ python scripts/export_concept_judge_subset.py \
 ## Output structure
 
 ```text
-results/concept_judge_subset/example_run/
+results/.../example_run/
   manifest.json
   judge_tasks.jsonl
   judge_prompt_template.txt
   judge_response_schema.json
   images/
+  cases/
+
+Spatial export additionally contains:
+
+```text
   overlays/
   maps_native/
   maps_upsampled/
-  cases/
+```
 ```
 
 Each line in `judge_tasks.jsonl` is one concept-image pair and is the unit of machine or human judgment.
 
 ## Judge questions
 
-For each concept-image pair, the judge should answer:
+For **concept presence** tasks, the judge should answer:
 
 1. Is the concept visibly present in the image?
-2. Does the highlighted region actually correspond to that concept?
+
+For **spatial faithfulness** tasks, the judge should answer:
+
+1. Does the highlighted region actually correspond to that concept?
 
 Allowed labels:
 
@@ -105,7 +157,7 @@ If you later add human labels, use the same exported subset and task structure s
 
 ## OpenAI VLM judge runner
 
-Use `scripts/run_concept_vlm_judge_openai.py` to consume `judge_tasks.jsonl` and write structured machine-judge outputs.
+Use `scripts/run_concept_vlm_judge_openai.py` to consume either kind of `judge_tasks.jsonl` and write structured machine-judge outputs.
 
 Example:
 
