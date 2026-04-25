@@ -42,7 +42,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Standalone ImageNet SAVLG trainer optimized for A10 throughput."
     )
-    parser.add_argument("--mode", choices=["train", "profile", "glm_only"], default="train")
+    parser.add_argument(
+        "--mode",
+        choices=["train", "profile", "glm_only", "precompute_targets"],
+        default="train",
+    )
     parser.add_argument("--train_root", default="")
     parser.add_argument("--annotation_dir", default="")
     parser.add_argument("--concept_file", default="concept_files/imagenet_filtered.txt")
@@ -51,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run_name", default="")
     parser.add_argument("--reuse_run_dir", default="")
     parser.add_argument("--feature_dir", default="")
+    parser.add_argument("--precomputed_target_dir", default="")
     parser.add_argument("--persist_feature_copy", action="store_true")
     parser.add_argument("--max_train_images", type=int, default=0)
     parser.add_argument("--max_val_images", type=int, default=0)
@@ -122,6 +127,7 @@ class Config:
     run_name: str
     reuse_run_dir: str
     feature_dir: str
+    precomputed_target_dir: str
     persist_feature_copy: bool
     max_train_images: int
     max_val_images: int
@@ -185,6 +191,7 @@ def build_config(args: argparse.Namespace) -> Config:
         run_name=args.run_name,
         reuse_run_dir=args.reuse_run_dir,
         feature_dir=args.feature_dir,
+        precomputed_target_dir=args.precomputed_target_dir,
         persist_feature_copy=bool(args.persist_feature_copy),
         max_train_images=args.max_train_images,
         max_val_images=args.max_val_images,
@@ -254,13 +261,15 @@ def configure_runtime(cfg: Config) -> None:
 
 
 def validate_config(cfg: Config) -> None:
-    if cfg.mode in {"train", "profile"}:
+    if cfg.mode in {"train", "profile", "precompute_targets"}:
         if not cfg.train_root:
             raise ValueError("--train_root is required for train/profile mode")
         if not cfg.annotation_dir:
             raise ValueError("--annotation_dir is required for train/profile mode")
     if cfg.mode == "glm_only" and not cfg.reuse_run_dir:
         raise ValueError("--reuse_run_dir is required for glm_only mode")
+    if cfg.mode == "precompute_targets" and not cfg.precomputed_target_dir:
+        raise ValueError("--precomputed_target_dir is required for precompute_targets mode")
 
 
 def amp_dtype(name: str) -> Optional[torch.dtype]:
@@ -335,6 +344,20 @@ class SafeImageFolderWithAnnotations(Dataset):
         self.concepts = list(concepts)
         self.concept_to_idx = {name: idx for idx, name in enumerate(self.concepts)}
         self.dataset = ImageFolder(root=root, loader=self._safe_loader, transform=self._transform(split))
+        self.precomputed_targets: Optional[PrecomputedTargetStore] = None
+
+    def attach_precomputed_targets(self, root: str) -> None:
+        if not root:
+            return
+        target_dir = Path(root) / self.split
+        if not target_dir.is_dir():
+            raise FileNotFoundError(f"Missing precomputed target directory: {target_dir}")
+        self.precomputed_targets = PrecomputedTargetStore(target_dir)
+        if len(self.precomputed_targets) != len(self.dataset):
+            raise ValueError(
+                f"Precomputed targets at {target_dir} have {len(self.precomputed_targets)} entries, "
+                f"expected {len(self.dataset)}"
+            )
 
     def _transform(self, split: str) -> transforms.Compose:
         normalize = transforms.Normalize(
@@ -393,13 +416,17 @@ class SafeImageFolderWithAnnotations(Dataset):
         with self._safe_loader(path) as raw_image:
             image_size = (int(raw_image.size[0]), int(raw_image.size[1]))
             image = self.dataset.transform(raw_image) if self.dataset.transform is not None else raw_image
-        return {
+        item = {
             "image": image,
             "class_id": int(class_id),
             "sample_index": int(index),
-            "annotation": self._load_annotation(index),
             "image_size": image_size,
         }
+        if self.precomputed_targets is not None:
+            item.update(self.precomputed_targets.get(index))
+        else:
+            item["annotation"] = self._load_annotation(index)
+        return item
 
 
 class DatasetView(Dataset):
@@ -414,6 +441,45 @@ class DatasetView(Dataset):
 
     def __getitem__(self, index: int):
         return self.base_dataset[self.indices[index]]
+
+
+class PrecomputedTargetStore:
+    def __init__(self, root: Path) -> None:
+        metadata = json.loads((root / "metadata.json").read_text())
+        self.root = root
+        self.n_examples = int(metadata["n_examples"])
+        self.n_concepts = int(metadata["n_concepts"])
+        self.mask_h = int(metadata["mask_h"])
+        self.mask_w = int(metadata["mask_w"])
+        self.global_targets = np.load(root / "global_targets.npy", mmap_mode="r")
+        self.offsets = np.load(root / "offsets.npy", mmap_mode="r")
+        self.concept_ids = np.load(root / "concept_ids.npy", mmap_mode="r")
+        self.mask_targets = np.load(root / "mask_targets.npy", mmap_mode="r")
+
+    def __len__(self) -> int:
+        return self.n_examples
+
+    def get(self, index: int) -> Dict[str, torch.Tensor]:
+        start = int(self.offsets[index])
+        end = int(self.offsets[index + 1])
+        global_target = torch.from_numpy(
+            np.ascontiguousarray(np.asarray(self.global_targets[index], dtype=np.float32))
+        )
+        if end <= start:
+            mask_indices = torch.zeros((0,), dtype=torch.long)
+            mask_targets = torch.zeros((0, self.mask_h, self.mask_w), dtype=torch.float32)
+        else:
+            mask_indices = torch.from_numpy(
+                np.ascontiguousarray(np.asarray(self.concept_ids[start:end], dtype=np.int64))
+            )
+            mask_targets = torch.from_numpy(
+                np.ascontiguousarray(np.asarray(self.mask_targets[start:end], dtype=np.float32))
+            )
+        return {
+            "global_target": global_target,
+            "mask_indices": mask_indices,
+            "mask_targets": mask_targets,
+        }
 
 
 def split_train_val(
@@ -442,13 +508,40 @@ def split_train_val(
 
 
 def collate_batch(batch: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    return {
+    payload = {
         "images": torch.stack([item["image"] for item in batch], dim=0),
         "class_ids": torch.tensor([item["class_id"] for item in batch], dtype=torch.long),
         "sample_indices": torch.tensor([item["sample_index"] for item in batch], dtype=torch.long),
-        "annotations": [item["annotation"] for item in batch],
         "image_sizes": [item["image_size"] for item in batch],
     }
+    if "global_target" not in batch[0]:
+        payload["annotations"] = [item["annotation"] for item in batch]
+        return payload
+
+    payload["global_targets"] = torch.stack([item["global_target"] for item in batch], dim=0)
+    max_k = max((int(item["mask_indices"].numel()) for item in batch), default=0)
+    if max_k == 0:
+        payload["mask_indices"] = torch.full((len(batch), 1), -1, dtype=torch.long)
+        payload["mask_targets"] = torch.zeros((len(batch), 1, batch[0]["mask_targets"].shape[-2], batch[0]["mask_targets"].shape[-1]), dtype=torch.float32)
+        payload["mask_valid"] = torch.zeros((len(batch), 1), dtype=torch.bool)
+        return payload
+
+    mask_h = int(batch[0]["mask_targets"].shape[-2])
+    mask_w = int(batch[0]["mask_targets"].shape[-1])
+    idx_pad = torch.full((len(batch), max_k), -1, dtype=torch.long)
+    mask_pad = torch.zeros((len(batch), max_k, mask_h, mask_w), dtype=torch.float32)
+    valid = torch.zeros((len(batch), max_k), dtype=torch.bool)
+    for batch_index, item in enumerate(batch):
+        count = int(item["mask_indices"].numel())
+        if count == 0:
+            continue
+        idx_pad[batch_index, :count] = item["mask_indices"]
+        mask_pad[batch_index, :count] = item["mask_targets"]
+        valid[batch_index, :count] = True
+    payload["mask_indices"] = idx_pad
+    payload["mask_targets"] = mask_pad
+    payload["mask_valid"] = valid
+    return payload
 
 
 class IndexedTensorDataset(Dataset):
@@ -659,6 +752,180 @@ def build_gdino_targets(
         mask_pad.to(device, non_blocking=True),
         valid.to(device, non_blocking=True),
     )
+
+
+def batch_targets_to_device(batch: Dict[str, Any], cfg: Config) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    return (
+        batch["global_targets"].to(cfg.device, non_blocking=True),
+        batch["mask_indices"].to(cfg.device, non_blocking=True),
+        batch["mask_targets"].to(cfg.device, non_blocking=True),
+        batch["mask_valid"].to(cfg.device, non_blocking=True),
+    )
+
+
+def build_gdino_target_sample(
+    sample_annotations: Sequence[Dict[str, Any]],
+    image_size: Tuple[int, int],
+    concept_to_idx: Dict[str, int],
+    n_concepts: int,
+    cfg: Config,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    scores = np.zeros((n_concepts,), dtype=np.float32)
+    mask_dict: Dict[int, np.ndarray] = {}
+    entries = sample_annotations[1:] if isinstance(sample_annotations, list) else []
+    for ann in entries:
+        if not isinstance(ann, dict):
+            continue
+        label = ann.get("label")
+        if not isinstance(label, str):
+            continue
+        concept_idx = concept_to_idx.get(canonicalize_concept_label(label))
+        if concept_idx is None:
+            continue
+        score = float(ann.get("logit", 0.0))
+        if score > scores[concept_idx]:
+            scores[concept_idx] = score
+        if score < cfg.concept_threshold:
+            continue
+        mask = rasterize_box_iou(
+            ann.get("box"),
+            image_size=image_size,
+            mask_h=cfg.mask_h,
+            mask_w=cfg.mask_w,
+            iou_thresh=cfg.patch_iou_thresh,
+        )
+        if mask is None:
+            continue
+        existing = mask_dict.get(concept_idx)
+        if existing is None:
+            mask_dict[concept_idx] = mask
+        else:
+            np.maximum(existing, mask, out=existing)
+    global_target = (scores > cfg.concept_threshold).astype(np.uint8)
+    if not mask_dict:
+        return global_target, np.zeros((0,), dtype=np.int32), np.zeros((0, cfg.mask_h, cfg.mask_w), dtype=np.uint8)
+    keys = np.asarray(sorted(mask_dict.keys()), dtype=np.int32)
+    masks = np.stack([mask_dict[int(key)] for key in keys], axis=0).astype(np.uint8, copy=False)
+    return global_target, keys, masks
+
+
+def get_image_size(path: str, input_size: int, min_image_bytes: int) -> Tuple[int, int]:
+    try:
+        if os.path.getsize(path) < min_image_bytes:
+            raise OSError(f"tiny file: {path}")
+        with Image.open(path) as image:
+            width, height = image.size
+        return int(width), int(height)
+    except (FileNotFoundError, OSError, UnidentifiedImageError):
+        return int(input_size), int(input_size)
+
+
+def precompute_target_store(
+    dataset: SafeImageFolderWithAnnotations,
+    output_root: Path,
+    cfg: Config,
+) -> Dict[str, Any]:
+    split_dir = output_root / dataset.split
+    split_dir.mkdir(parents=True, exist_ok=True)
+    total_examples = len(dataset)
+    n_concepts = len(dataset.concepts)
+    global_targets_path = split_dir / "global_targets.npy"
+    offsets_path = split_dir / "offsets.npy"
+    concept_ids_path = split_dir / "concept_ids.npy"
+    mask_targets_path = split_dir / "mask_targets.npy"
+
+    counts = np.zeros((total_examples,), dtype=np.int32)
+    global_targets = np.lib.format.open_memmap(
+        global_targets_path,
+        mode="w+",
+        dtype=np.uint8,
+        shape=(total_examples, n_concepts),
+    )
+    total_entries = 0
+    start_time = time.perf_counter()
+    for sample_index in range(total_examples):
+        path, _ = dataset.dataset.samples[sample_index]
+        image_size = get_image_size(path, dataset.input_size, dataset.min_image_bytes)
+        annotations = dataset._load_annotation(sample_index)
+        global_target, concept_ids, _ = build_gdino_target_sample(
+            annotations,
+            image_size,
+            dataset.concept_to_idx,
+            n_concepts,
+            cfg,
+        )
+        global_targets[sample_index] = global_target
+        counts[sample_index] = int(concept_ids.shape[0])
+        total_entries += int(concept_ids.shape[0])
+        if (sample_index + 1) % 1000 == 0:
+            global_targets.flush()
+            elapsed = time.perf_counter() - start_time
+            print(
+                f"[precompute_targets:{dataset.split}] count_pass n={sample_index + 1}/{total_examples} "
+                f"ips={(sample_index + 1) / max(elapsed, 1e-6):.2f}",
+                flush=True,
+            )
+    global_targets.flush()
+
+    offsets = np.zeros((total_examples + 1,), dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+    np.save(offsets_path, offsets)
+    concept_ids_memmap = np.lib.format.open_memmap(
+        concept_ids_path,
+        mode="w+",
+        dtype=np.int32,
+        shape=(total_entries,),
+    )
+    mask_targets_memmap = np.lib.format.open_memmap(
+        mask_targets_path,
+        mode="w+",
+        dtype=np.uint8,
+        shape=(total_entries, cfg.mask_h, cfg.mask_w),
+    )
+    offset = 0
+    second_start = time.perf_counter()
+    for sample_index in range(total_examples):
+        path, _ = dataset.dataset.samples[sample_index]
+        image_size = get_image_size(path, dataset.input_size, dataset.min_image_bytes)
+        annotations = dataset._load_annotation(sample_index)
+        _, concept_ids, masks = build_gdino_target_sample(
+            annotations,
+            image_size,
+            dataset.concept_to_idx,
+            n_concepts,
+            cfg,
+        )
+        count = int(concept_ids.shape[0])
+        if count > 0:
+            concept_ids_memmap[offset : offset + count] = concept_ids
+            mask_targets_memmap[offset : offset + count] = masks
+            offset += count
+        if (sample_index + 1) % 1000 == 0:
+            concept_ids_memmap.flush()
+            mask_targets_memmap.flush()
+            elapsed = time.perf_counter() - second_start
+            print(
+                f"[precompute_targets:{dataset.split}] data_pass n={sample_index + 1}/{total_examples} "
+                f"ips={(sample_index + 1) / max(elapsed, 1e-6):.2f}",
+                flush=True,
+            )
+    concept_ids_memmap.flush()
+    mask_targets_memmap.flush()
+    metadata = {
+        "split": dataset.split,
+        "n_examples": total_examples,
+        "n_concepts": n_concepts,
+        "mask_h": cfg.mask_h,
+        "mask_w": cfg.mask_w,
+        "total_entries": int(total_entries),
+        "global_targets_path": str(global_targets_path),
+        "offsets_path": str(offsets_path),
+        "concept_ids_path": str(concept_ids_path),
+        "mask_targets_path": str(mask_targets_path),
+        "elapsed_sec": time.perf_counter() - start_time,
+    }
+    (split_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
+    return metadata
 
 
 class ResNet50Conv45(nn.Module):
@@ -885,14 +1152,17 @@ def train_one_epoch(
     reset_cuda_peak_stats_if_needed(cfg)
     for step, batch in enumerate(loader, start=1):
         images = prepare_images(batch["images"], cfg)
-        global_targets, idx_pad, mask_pad, valid_pad = build_gdino_targets(
-            batch["annotations"],
-            batch["image_sizes"],
-            concept_to_idx,
-            n_concepts,
-            cfg,
-            cfg.device,
-        )
+        if "global_targets" in batch:
+            global_targets, idx_pad, mask_pad, valid_pad = batch_targets_to_device(batch, cfg)
+        else:
+            global_targets, idx_pad, mask_pad, valid_pad = build_gdino_targets(
+                batch["annotations"],
+                batch["image_sizes"],
+                concept_to_idx,
+                n_concepts,
+                cfg,
+                cfg.device,
+            )
         optimizer.zero_grad(set_to_none=True)
         with torch.no_grad():
             feats = backbone(images)
@@ -955,14 +1225,17 @@ def evaluate_one_epoch(
     reset_cuda_peak_stats_if_needed(cfg)
     for step, batch in enumerate(loader, start=1):
         images = prepare_images(batch["images"], cfg)
-        global_targets, idx_pad, mask_pad, valid_pad = build_gdino_targets(
-            batch["annotations"],
-            batch["image_sizes"],
-            concept_to_idx,
-            n_concepts,
-            cfg,
-            cfg.device,
-        )
+        if "global_targets" in batch:
+            global_targets, idx_pad, mask_pad, valid_pad = batch_targets_to_device(batch, cfg)
+        else:
+            global_targets, idx_pad, mask_pad, valid_pad = build_gdino_targets(
+                batch["annotations"],
+                batch["image_sizes"],
+                concept_to_idx,
+                n_concepts,
+                cfg,
+                cfg.device,
+            )
         with autocast_context(cfg):
             feats = backbone(images)
             outputs = head(feats)
@@ -1327,6 +1600,7 @@ def profile_pipeline(cfg: Config) -> Dict[str, Any]:
         min_image_bytes=cfg.min_image_bytes,
         split="train",
     )
+    dataset.attach_precomputed_targets(cfg.precomputed_target_dir)
     indices = list(range(len(dataset)))
     if cfg.max_train_images > 0:
         indices = indices[: cfg.max_train_images]
@@ -1346,14 +1620,17 @@ def profile_pipeline(cfg: Config) -> Dict[str, Any]:
         t1 = time.perf_counter()
         images = prepare_images(batch["images"], cfg)
         t2 = time.perf_counter()
-        global_targets, idx_pad, mask_pad, valid_pad = build_gdino_targets(
-            batch["annotations"],
-            batch["image_sizes"],
-            dataset.concept_to_idx,
-            len(concepts),
-            cfg,
-            cfg.device,
-        )
+        if "global_targets" in batch:
+            global_targets, idx_pad, mask_pad, valid_pad = batch_targets_to_device(batch, cfg)
+        else:
+            global_targets, idx_pad, mask_pad, valid_pad = build_gdino_targets(
+                batch["annotations"],
+                batch["image_sizes"],
+                dataset.concept_to_idx,
+                len(concepts),
+                cfg,
+                cfg.device,
+            )
         t3 = time.perf_counter()
         with torch.no_grad():
             with autocast_context(cfg):
@@ -1400,6 +1677,38 @@ def profile_pipeline(cfg: Config) -> Dict[str, Any]:
     }
 
 
+def run_precompute_targets(cfg: Config) -> Dict[str, Any]:
+    concepts = load_concepts(cfg.concept_file)
+    output_root = Path(cfg.precomputed_target_dir).resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    train_dataset = SafeImageFolderWithAnnotations(
+        root=cfg.train_root,
+        annotation_dir=cfg.annotation_dir,
+        concepts=concepts,
+        input_size=cfg.input_size,
+        min_image_bytes=cfg.min_image_bytes,
+        split="train",
+    )
+    train_summary = precompute_target_store(train_dataset, output_root, cfg)
+    result: Dict[str, Any] = {
+        "mode": "precompute_targets",
+        "output_root": str(output_root),
+        "train": train_summary,
+    }
+    if cfg.val_root:
+        val_dataset = SafeImageFolderWithAnnotations(
+            root=cfg.val_root,
+            annotation_dir=cfg.annotation_dir,
+            concepts=concepts,
+            input_size=cfg.input_size,
+            min_image_bytes=cfg.min_image_bytes,
+            split="val",
+        )
+        result["val"] = precompute_target_store(val_dataset, output_root, cfg)
+    (output_root / "precompute_summary.json").write_text(json.dumps(result, indent=2))
+    return result
+
+
 def run_training(cfg: Config) -> Dict[str, Any]:
     concepts = load_concepts(cfg.concept_file)
     train_dataset_full = SafeImageFolderWithAnnotations(
@@ -1410,6 +1719,7 @@ def run_training(cfg: Config) -> Dict[str, Any]:
         min_image_bytes=cfg.min_image_bytes,
         split="train",
     )
+    train_dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir)
     if cfg.val_root:
         val_dataset_full = SafeImageFolderWithAnnotations(
             root=cfg.val_root,
@@ -1419,6 +1729,7 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             min_image_bytes=cfg.min_image_bytes,
             split="val",
         )
+        val_dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir)
         train_indices = list(range(len(train_dataset_full)))
         if cfg.max_train_images > 0:
             train_indices = train_indices[: cfg.max_train_images]
@@ -1677,6 +1988,8 @@ def main() -> None:
         result = profile_pipeline(cfg)
     elif cfg.mode == "glm_only":
         result = run_glm_only(cfg)
+    elif cfg.mode == "precompute_targets":
+        result = run_precompute_targets(cfg)
     else:
         result = run_training(cfg)
     print(json.dumps(result, indent=2))
