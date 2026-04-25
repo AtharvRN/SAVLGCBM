@@ -68,9 +68,10 @@ spec:
 
               RUN_BASE=/persist/savlg_imagenet_standalone_runs
               SOURCE_RUN=/persist/savlg_imagenet_standalone_runs/savlg_imagenet_full_1ep_20260424T204833Z_savlg-imagenet-local-1ep-gtlt9
+              LOCAL_SOURCE_RUN=/feature-cache/source_run
               RUN_NAME="savlg_imagenet_full_glm_rerun_$(date -u +%Y%m%dT%H%M%SZ)"
               TELEMETRY_LOG="${RUN_BASE}/${RUN_NAME}.system_telemetry.csv"
-              mkdir -p "${RUN_BASE}" "${TORCH_HOME}"
+              mkdir -p "${RUN_BASE}" "${TORCH_HOME}" "${LOCAL_SOURCE_RUN}/features"
 
               test -d "${SOURCE_RUN}"
               test -f "${SOURCE_RUN}/features/train_features.npy"
@@ -79,11 +80,22 @@ spec:
               test -f "${SOURCE_RUN}/features/val_targets.npy"
               test -f "${SOURCE_RUN}/final_layer_normalization.pt"
 
+              echo "[train] copying feature memmaps from PVC to local ephemeral storage"
+              cp "${SOURCE_RUN}/features/train_features.npy" "${LOCAL_SOURCE_RUN}/features/"
+              cp "${SOURCE_RUN}/features/train_targets.npy" "${LOCAL_SOURCE_RUN}/features/"
+              cp "${SOURCE_RUN}/features/val_features.npy" "${LOCAL_SOURCE_RUN}/features/"
+              cp "${SOURCE_RUN}/features/val_targets.npy" "${LOCAL_SOURCE_RUN}/features/"
+              cp "${SOURCE_RUN}/final_layer_normalization.pt" "${LOCAL_SOURCE_RUN}/"
+              if [[ -f "${SOURCE_RUN}/concepts.txt" ]]; then
+                cp "${SOURCE_RUN}/concepts.txt" "${LOCAL_SOURCE_RUN}/"
+              fi
+              du -sh "${LOCAL_SOURCE_RUN}" || true
+
               python -u scripts/train_savlg_imagenet_standalone.py \
                 --mode glm_only \
                 --save_dir "${RUN_BASE}" \
                 --run_name "${RUN_NAME}" \
-                --reuse_run_dir "${SOURCE_RUN}" \
+                --reuse_run_dir "${LOCAL_SOURCE_RUN}" \
                 --epochs 0 \
                 --batch_size 256 \
                 --workers 4 \
@@ -94,8 +106,11 @@ spec:
                 --channels_last \
                 --tf32 \
                 --saga_batch_size 512 \
+                --saga_workers 4 \
+                --saga_prefetch_factor 2 \
                 --saga_lam 0.005 \
                 --saga_n_iters 5 \
+                --saga_verbose_every 1 \
                 --saga_table_device cpu \
                 --feature_storage_dtype fp16 \
                 --log_every 10 \
@@ -128,6 +143,8 @@ spec:
               mountPath: /work
             - name: scratch-pvc
               mountPath: /persist
+            - name: feature-cache
+              mountPath: /feature-cache
             - name: dev-shm
               mountPath: /dev/shm
           resources:
@@ -146,6 +163,9 @@ spec:
         - name: scratch-pvc
           persistentVolumeClaim:
             claimName: atharv-rwo-scratch-2ti
+        - name: feature-cache
+          emptyDir:
+            sizeLimit: 24Gi
         - name: dev-shm
           emptyDir:
             medium: Memory

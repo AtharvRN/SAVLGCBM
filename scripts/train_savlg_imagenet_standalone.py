@@ -99,9 +99,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_every", type=int, default=1)
     parser.add_argument("--skip_final_layer", action="store_true")
     parser.add_argument("--saga_batch_size", type=int, default=512)
+    parser.add_argument("--saga_workers", type=int, default=0)
+    parser.add_argument("--saga_prefetch_factor", type=int, default=2)
     parser.add_argument("--saga_step_size", type=float, default=0.1)
     parser.add_argument("--saga_lam", type=float, default=5e-4)
     parser.add_argument("--saga_n_iters", type=int, default=80)
+    parser.add_argument("--saga_verbose_every", type=int, default=10)
     parser.add_argument("--feature_storage_dtype", choices=["fp16", "fp32"], default="fp16")
     parser.add_argument("--saga_table_device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--print_config", action="store_true")
@@ -160,9 +163,12 @@ class Config:
     save_every: int
     skip_final_layer: bool
     saga_batch_size: int
+    saga_workers: int
+    saga_prefetch_factor: int
     saga_step_size: float
     saga_lam: float
     saga_n_iters: int
+    saga_verbose_every: int
     feature_storage_dtype: str
     saga_table_device: str
     print_config: bool
@@ -220,9 +226,12 @@ def build_config(args: argparse.Namespace) -> Config:
         save_every=args.save_every,
         skip_final_layer=bool(args.skip_final_layer),
         saga_batch_size=args.saga_batch_size,
+        saga_workers=max(0, int(args.saga_workers)),
+        saga_prefetch_factor=max(1, int(args.saga_prefetch_factor)),
         saga_step_size=args.saga_step_size,
         saga_lam=args.saga_lam,
         saga_n_iters=args.saga_n_iters,
+        saga_verbose_every=max(1, int(args.saga_verbose_every)),
         feature_storage_dtype=args.feature_storage_dtype,
         saga_table_device=args.saga_table_device,
         print_config=bool(args.print_config),
@@ -1219,29 +1228,37 @@ def train_sparse_final_layer(
         std=feature_std_np,
         include_index=False,
     )
+    train_loader_kwargs: Dict[str, Any] = {
+        "batch_size": cfg.saga_batch_size,
+        "shuffle": True,
+        "num_workers": cfg.saga_workers,
+        "pin_memory": cfg.pin_memory,
+        "drop_last": False,
+    }
+    eval_loader_kwargs: Dict[str, Any] = {
+        "batch_size": cfg.saga_batch_size,
+        "shuffle": False,
+        "num_workers": cfg.saga_workers,
+        "pin_memory": cfg.pin_memory,
+        "drop_last": False,
+    }
+    if cfg.saga_workers > 0:
+        train_loader_kwargs["persistent_workers"] = True
+        train_loader_kwargs["prefetch_factor"] = cfg.saga_prefetch_factor
+        eval_loader_kwargs["persistent_workers"] = True
+        eval_loader_kwargs["prefetch_factor"] = cfg.saga_prefetch_factor
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=cfg.saga_batch_size,
-        shuffle=True,
-        num_workers=0,
-        pin_memory=cfg.pin_memory,
-        drop_last=False,
+        **train_loader_kwargs,
     )
     train_eval_loader = DataLoader(
         train_eval_dataset,
-        batch_size=cfg.saga_batch_size,
-        shuffle=False,
-        num_workers=0,
-        pin_memory=cfg.pin_memory,
-        drop_last=False,
+        **eval_loader_kwargs,
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=cfg.saga_batch_size,
-        shuffle=False,
-        num_workers=0,
-        pin_memory=cfg.pin_memory,
-        drop_last=False,
+        **eval_loader_kwargs,
     )
 
     linear = nn.Linear(int(train_dataset.features.shape[1]), int(n_classes), bias=True).to(cfg.device)
@@ -1265,7 +1282,7 @@ def train_sparse_final_layer(
         metadata=metadata,
         n_ex=len(train_dataset),
         n_classes=n_classes,
-        verbose=10,
+        verbose=cfg.saga_verbose_every,
     )
     best = output["best"]
     linear.load_state_dict({"weight": best["weight"], "bias": best["bias"]})
