@@ -41,13 +41,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Standalone ImageNet SAVLG trainer optimized for A10 throughput."
     )
-    parser.add_argument("--mode", choices=["train", "profile"], default="train")
-    parser.add_argument("--train_root", required=True)
-    parser.add_argument("--annotation_dir", required=True)
+    parser.add_argument("--mode", choices=["train", "profile", "glm_only"], default="train")
+    parser.add_argument("--train_root", default="")
+    parser.add_argument("--annotation_dir", default="")
     parser.add_argument("--concept_file", default="concept_files/imagenet_filtered.txt")
     parser.add_argument("--val_root", default="")
     parser.add_argument("--save_dir", default="saved_models/imagenet_standalone")
     parser.add_argument("--run_name", default="")
+    parser.add_argument("--reuse_run_dir", default="")
     parser.add_argument("--max_train_images", type=int, default=0)
     parser.add_argument("--max_val_images", type=int, default=0)
     parser.add_argument("--val_split", type=float, default=0.1)
@@ -113,6 +114,7 @@ class Config:
     val_root: str
     save_dir: str
     run_name: str
+    reuse_run_dir: str
     max_train_images: int
     max_val_images: int
     val_split: float
@@ -170,6 +172,7 @@ def build_config(args: argparse.Namespace) -> Config:
         val_root=args.val_root,
         save_dir=args.save_dir,
         run_name=args.run_name,
+        reuse_run_dir=args.reuse_run_dir,
         max_train_images=args.max_train_images,
         max_val_images=args.max_val_images,
         val_split=args.val_split,
@@ -232,6 +235,16 @@ def configure_runtime(cfg: Config) -> None:
         torch.set_float32_matmul_precision("high")
     except AttributeError:
         pass
+
+
+def validate_config(cfg: Config) -> None:
+    if cfg.mode in {"train", "profile"}:
+        if not cfg.train_root:
+            raise ValueError("--train_root is required for train/profile mode")
+        if not cfg.annotation_dir:
+            raise ValueError("--annotation_dir is required for train/profile mode")
+    if cfg.mode == "glm_only" and not cfg.reuse_run_dir:
+        raise ValueError("--reuse_run_dir is required for glm_only mode")
 
 
 def amp_dtype(name: str) -> Optional[torch.dtype]:
@@ -1508,13 +1521,91 @@ def run_training(cfg: Config) -> Dict[str, Any]:
     return result
 
 
+def infer_n_classes_from_targets(*target_paths: Path) -> int:
+    max_class_id = -1
+    for target_path in target_paths:
+        targets = np.load(target_path, mmap_mode="r")
+        if int(targets.shape[0]) == 0:
+            continue
+        max_class_id = max(max_class_id, int(np.asarray(targets).max()))
+    if max_class_id < 0:
+        raise RuntimeError("Could not infer class count from target files")
+    return max_class_id + 1
+
+
+def run_glm_only(cfg: Config) -> Dict[str, Any]:
+    source_run_dir = Path(cfg.reuse_run_dir).resolve()
+    if not source_run_dir.is_dir():
+        raise FileNotFoundError(f"Missing reuse_run_dir: {source_run_dir}")
+
+    train_feature_path = source_run_dir / "features" / "train_features.npy"
+    train_target_path = source_run_dir / "features" / "train_targets.npy"
+    val_feature_path = source_run_dir / "features" / "val_features.npy"
+    val_target_path = source_run_dir / "features" / "val_targets.npy"
+    for path in (train_feature_path, train_target_path, val_feature_path, val_target_path):
+        if not path.exists():
+            raise FileNotFoundError(f"Missing feature artifact: {path}")
+
+    normalization_path = source_run_dir / "final_layer_normalization.pt"
+    if normalization_path.exists():
+        normalization_payload = torch.load(normalization_path, map_location="cpu")
+        feature_mean = normalization_payload["mean"].float().cpu()
+        feature_std = normalization_payload["std"].float().cpu()
+        normalization_summary = normalization_payload.get("normalization", {})
+    else:
+        feature_mean, feature_std, normalization_summary = compute_feature_stats_memmap(train_feature_path, cfg)
+
+    run_dir = build_run_dir(cfg)
+    (run_dir / "config.json").write_text(json.dumps(asdict(cfg), indent=2))
+    (run_dir / "source_run_dir.txt").write_text(f"{source_run_dir}\n")
+    source_concepts = source_run_dir / "concepts.txt"
+    if source_concepts.exists():
+        (run_dir / "concepts.txt").write_text(source_concepts.read_text())
+
+    torch.save(
+        {
+            "mean": feature_mean,
+            "std": feature_std,
+            "source_run_dir": str(source_run_dir),
+            "normalization": normalization_summary,
+        },
+        run_dir / "final_layer_normalization.pt",
+    )
+
+    n_classes = infer_n_classes_from_targets(train_target_path, val_target_path)
+    final_layer_summary = train_sparse_final_layer(
+        train_feature_path=train_feature_path,
+        train_target_path=train_target_path,
+        val_feature_path=val_feature_path,
+        val_target_path=val_target_path,
+        feature_mean=feature_mean,
+        feature_std=feature_std,
+        cfg=cfg,
+        n_classes=n_classes,
+        run_dir=run_dir,
+    )
+
+    result = {
+        "mode": "glm_only",
+        "source_run_dir": str(source_run_dir),
+        "run_dir": str(run_dir),
+        "n_classes": n_classes,
+        "final_layer": final_layer_summary,
+    }
+    (run_dir / "summary.json").write_text(json.dumps(result, indent=2))
+    return result
+
+
 def main() -> None:
     cfg = build_config(parse_args())
+    validate_config(cfg)
     configure_runtime(cfg)
     if cfg.print_config:
         print(json.dumps(asdict(cfg), indent=2, sort_keys=True))
     if cfg.mode == "profile":
         result = profile_pipeline(cfg)
+    elif cfg.mode == "glm_only":
+        result = run_glm_only(cfg)
     else:
         result = run_training(cfg)
     print(json.dumps(result, indent=2))

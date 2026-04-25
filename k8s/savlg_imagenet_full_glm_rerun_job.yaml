@@ -1,0 +1,152 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: savlg-imagenet-full-glm-rerun
+  namespace: wenglab-interpretable-ai
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job-name: savlg-imagenet-full-glm-rerun
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-A10
+
+      initContainers:
+        - name: clone-repo
+          image: alpine/git:2.45.2
+          command: ["sh", "-lc"]
+          env:
+            - name: REPO_URL
+              value: "https://github.com/AtharvRN/SAVLGCBM.git"
+            - name: REPO_REF
+              value: "imagenet-training"
+          args:
+            - |
+              set -euo pipefail
+              git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" /work/SAVLGCBM
+              echo "[clone-repo] commit $(git -C /work/SAVLGCBM rev-parse --short HEAD)"
+              test -f /work/SAVLGCBM/scripts/train_savlg_imagenet_standalone.py
+              test -f /work/SAVLGCBM/scripts/log_system_telemetry.py
+              chmod -R a+rX /work/SAVLGCBM
+              mkdir -p /work/out
+              chmod 777 /work /work/out
+          volumeMounts:
+            - name: work
+              mountPath: /work
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+
+      containers:
+        - name: train
+          image: ghcr.io/atharvrn/savlgcbm-cbm:pt222-cu121
+          command: ["bash", "-lc"]
+          env:
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TORCH_HOME
+              value: /persist/torch_home
+          args:
+            - |
+              set -euo pipefail
+              cd /work/SAVLGCBM
+
+              export MKL_INTERFACE_LAYER=GNU
+              source /opt/conda/etc/profile.d/conda.sh
+              conda activate cbm
+
+              RUN_BASE=/persist/savlg_imagenet_standalone_runs
+              SOURCE_RUN=/persist/savlg_imagenet_standalone_runs/savlg_imagenet_full_1ep_20260424T204833Z_savlg-imagenet-local-1ep-gtlt9
+              RUN_NAME="savlg_imagenet_full_glm_rerun_$(date -u +%Y%m%dT%H%M%SZ)"
+              TELEMETRY_LOG="${RUN_BASE}/${RUN_NAME}.system_telemetry.csv"
+              mkdir -p "${RUN_BASE}" "${TORCH_HOME}"
+
+              test -d "${SOURCE_RUN}"
+              test -f "${SOURCE_RUN}/features/train_features.npy"
+              test -f "${SOURCE_RUN}/features/train_targets.npy"
+              test -f "${SOURCE_RUN}/features/val_features.npy"
+              test -f "${SOURCE_RUN}/features/val_targets.npy"
+              test -f "${SOURCE_RUN}/final_layer_normalization.pt"
+
+              python -u scripts/train_savlg_imagenet_standalone.py \
+                --mode glm_only \
+                --save_dir "${RUN_BASE}" \
+                --run_name "${RUN_NAME}" \
+                --reuse_run_dir "${SOURCE_RUN}" \
+                --epochs 0 \
+                --batch_size 256 \
+                --workers 4 \
+                --prefetch_factor 2 \
+                --device cuda \
+                --amp fp16 \
+                --pin_memory \
+                --channels_last \
+                --tf32 \
+                --saga_batch_size 512 \
+                --saga_lam 0.005 \
+                --saga_n_iters 5 \
+                --saga_table_device cpu \
+                --feature_storage_dtype fp16 \
+                --log_every 10 \
+                --print_config &
+              TRAIN_PID=$!
+
+              python -u scripts/log_system_telemetry.py \
+                --pid "${TRAIN_PID}" \
+                --interval 5 \
+                --output "${TELEMETRY_LOG}" &
+              MONITOR_PID=$!
+
+              set +e
+              wait "${TRAIN_PID}"
+              TRAIN_EXIT=$?
+              kill "${MONITOR_PID}" >/dev/null 2>&1 || true
+              wait "${MONITOR_PID}" >/dev/null 2>&1 || true
+              set -e
+
+              RUN_DIR="$(find "${RUN_BASE}" -mindepth 1 -maxdepth 1 -type d -name "${RUN_NAME}" | head -n 1)"
+              if [[ -n "${RUN_DIR}" && -f "${TELEMETRY_LOG}" ]]; then
+                mv "${TELEMETRY_LOG}" "${RUN_DIR}/system_telemetry.csv"
+                printf '%s\n' "${RUN_DIR}" | tee "${RUN_BASE}/LATEST_RUN_FULL_GLM_RERUN.txt"
+                echo "[train] latest glm-only rerun: ${RUN_DIR}"
+              fi
+
+              exit "${TRAIN_EXIT}"
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: scratch-pvc
+              mountPath: /persist
+            - name: dev-shm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+              cpu: "8"
+              memory: "64Gi"
+            limits:
+              nvidia.com/gpu: "1"
+              cpu: "8"
+              memory: "64Gi"
+
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: scratch-pvc
+          persistentVolumeClaim:
+            claimName: atharv-rwo-scratch-2ti
+        - name: dev-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
