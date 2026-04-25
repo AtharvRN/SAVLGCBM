@@ -3,6 +3,7 @@ import json
 import math
 import os
 import random
+import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -49,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_dir", default="saved_models/imagenet_standalone")
     parser.add_argument("--run_name", default="")
     parser.add_argument("--reuse_run_dir", default="")
+    parser.add_argument("--feature_dir", default="")
+    parser.add_argument("--persist_feature_copy", action="store_true")
     parser.add_argument("--max_train_images", type=int, default=0)
     parser.add_argument("--max_val_images", type=int, default=0)
     parser.add_argument("--val_split", type=float, default=0.1)
@@ -115,6 +118,8 @@ class Config:
     save_dir: str
     run_name: str
     reuse_run_dir: str
+    feature_dir: str
+    persist_feature_copy: bool
     max_train_images: int
     max_val_images: int
     val_split: float
@@ -173,6 +178,8 @@ def build_config(args: argparse.Namespace) -> Config:
         save_dir=args.save_dir,
         run_name=args.run_name,
         reuse_run_dir=args.reuse_run_dir,
+        feature_dir=args.feature_dir,
+        persist_feature_copy=bool(args.persist_feature_copy),
         max_train_images=args.max_train_images,
         max_val_images=args.max_val_images,
         val_split=args.val_split,
@@ -1118,6 +1125,31 @@ def compute_feature_stats_memmap(
     return torch.from_numpy(mean), torch.from_numpy(std), summary
 
 
+def copy_feature_artifacts_to_persist(
+    source_dir: Path,
+    persist_dir: Path,
+    filenames: Sequence[str],
+) -> Dict[str, Any]:
+    persist_dir.mkdir(parents=True, exist_ok=True)
+    start_time = time.perf_counter()
+    total_bytes = 0
+    copied = []
+    for name in filenames:
+        src = source_dir / name
+        dst = persist_dir / name
+        if not src.exists():
+            raise FileNotFoundError(f"Missing feature artifact for persistent copy: {src}")
+        shutil.copyfile(src, dst)
+        total_bytes += int(dst.stat().st_size)
+        copied.append(str(dst))
+    return {
+        "stage": "feature_persist_copy_summary",
+        "elapsed_sec": time.perf_counter() - start_time,
+        "total_bytes": total_bytes,
+        "files": copied,
+    }
+
+
 def topk_accuracy(logits: torch.Tensor, targets: torch.Tensor, k: int) -> float:
     k = min(k, int(logits.shape[1]))
     topk = logits.topk(k, dim=1).indices
@@ -1438,7 +1470,8 @@ def run_training(cfg: Config) -> Dict[str, Any]:
 
     final_layer_summary: Optional[Dict[str, Any]] = None
     if not cfg.skip_final_layer:
-        feature_dir = run_dir / "features"
+        feature_dir = Path(cfg.feature_dir).resolve() if cfg.feature_dir else (run_dir / "features")
+        persist_feature_dir = run_dir / "features"
         feature_batch_size = max(64, min(cfg.batch_size, 256))
         feature_workers = max(1, min(cfg.workers, 4))
         feature_prefetch = max(1, min(cfg.prefetch_factor, 2))
@@ -1470,6 +1503,19 @@ def run_training(cfg: Config) -> Dict[str, Any]:
         val_feature_path, val_target_path, val_extract_summary = extract_concept_features_to_memmap(
             backbone, head, feature_val_loader, cfg, split_name="val", output_dir=feature_dir
         )
+        persist_copy_summary: Optional[Dict[str, Any]] = None
+        if cfg.persist_feature_copy and feature_dir != persist_feature_dir:
+            persist_copy_summary = copy_feature_artifacts_to_persist(
+                feature_dir,
+                persist_feature_dir,
+                [
+                    train_feature_path.name,
+                    train_target_path.name,
+                    val_feature_path.name,
+                    val_target_path.name,
+                ],
+            )
+            print(json.dumps(persist_copy_summary), flush=True)
         feature_mean, feature_std, norm_summary = compute_feature_stats_memmap(
             train_feature_path, cfg
         )
@@ -1500,6 +1546,8 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             "val": val_extract_summary,
             "normalization": norm_summary,
         }
+        if persist_copy_summary is not None:
+            final_layer_summary["feature_extraction"]["persist_copy"] = persist_copy_summary
         (run_dir / "final_layer_summary.json").write_text(json.dumps(final_layer_summary, indent=2))
         print(
             f"[final_layer] train_top1={final_layer_summary['train']['top1']:.4f} "
