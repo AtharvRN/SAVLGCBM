@@ -102,3 +102,41 @@ It should be reported as one of:
 - proxy concept accuracy using a multimodal judge
 
 If you later add human labels, use the same exported subset and task structure so the machine-judge and human-judge results remain directly comparable.
+
+## OpenAI VLM judge runner
+
+Use `scripts/run_concept_vlm_judge_openai.py` to consume `judge_tasks.jsonl` and write structured machine-judge outputs.
+
+Example:
+
+```bash
+export OPENAI_API_KEY=...
+
+python scripts/run_concept_vlm_judge_openai.py \
+  --tasks-jsonl results/concept_judge_subset/example_run/judge_tasks.jsonl \
+  --model gpt-5.4
+```
+
+Outputs:
+
+- `judge_results_openai.jsonl`
+- `judge_results_openai_summary.json`
+
+The runner is resumable by `task_id`. Re-running it will skip tasks already written unless `--overwrite` is passed.
+
+## Environment note
+
+The `cbm` pod environment may not include the OpenAI package by default if the environment bootstrap skipped optional dependencies.
+
+If needed:
+
+```bash
+conda activate cbm
+pip install openai pydantic
+```
+
+You also need:
+
+```bash
+export OPENAI_API_KEY=...
+```
