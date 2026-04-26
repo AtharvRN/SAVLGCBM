@@ -73,6 +73,14 @@ def resolve_source_run_dir(artifact_dir: Path) -> Path:
         source_run_dir = Path(source_run_file.read_text().strip()).resolve()
         if source_run_dir.is_dir():
             return source_run_dir
+    metrics_file = artifact_dir / "glm_path_metrics.json"
+    if metrics_file.exists():
+        payload = json.loads(metrics_file.read_text())
+        source_value = payload.get("source_run_dir", "")
+        if source_value:
+            source_run_dir = Path(source_value).resolve()
+            if source_run_dir.is_dir():
+                return source_run_dir
     return artifact_dir
 
 

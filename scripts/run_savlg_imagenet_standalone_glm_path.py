@@ -288,6 +288,7 @@ def main() -> None:
         "path": serializable_path(path),
         "nec_selection": nec_selection,
     }
+    (output_dir / "source_run_dir.txt").write_text(f"{source_run_dir}\n")
     (output_dir / "glm_path_metrics.json").write_text(json.dumps(payload, indent=2))
     print(json.dumps(payload, indent=2))
 
