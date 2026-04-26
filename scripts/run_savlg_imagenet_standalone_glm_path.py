@@ -63,6 +63,8 @@ def load_config(config_dir: Path, device: str) -> Config:
     payload = json.loads((config_dir / "config.json").read_text())
     payload.setdefault("feature_storage_dtype", "fp16")
     payload.setdefault("saga_table_device", "cpu")
+    payload.setdefault("dense_lr", 1e-3)
+    payload.setdefault("dense_n_iters", 20)
     payload["device"] = device
     payload["skip_final_layer"] = True
     payload["print_config"] = False
