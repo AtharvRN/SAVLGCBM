@@ -55,12 +55,24 @@ def load_run_config(config_dir: Path, args: argparse.Namespace) -> Config:
     payload = json.loads((config_dir / "config.json").read_text())
     payload.setdefault("feature_storage_dtype", "fp16")
     payload.setdefault("saga_table_device", "cpu")
+    payload.setdefault("dense_lr", 1e-3)
+    payload.setdefault("dense_n_iters", 20)
     payload["device"] = args.device
     payload["batch_size"] = args.batch_size
     payload["workers"] = 0
     payload["skip_final_layer"] = True
     payload["print_config"] = False
     return Config(**payload)
+
+
+def resolve_final_layer_path(artifact_dir: Path) -> Path:
+    dense_path = artifact_dir / "final_layer_dense.pt"
+    if dense_path.exists():
+        return dense_path
+    glm_path = artifact_dir / "final_layer_glm_saga.pt"
+    if glm_path.exists():
+        return glm_path
+    raise FileNotFoundError(f"no final layer artifact found under {artifact_dir}")
 
 
 def load_val_targets(devkit_dir: Path) -> List[int]:
@@ -172,7 +184,8 @@ def main() -> None:
     head.load_state_dict(torch.load(source_run_dir / "concept_head_best.pt", map_location=cfg.device))
     print(f"[eval] loaded concept head n_concepts={len(concepts)}", flush=True)
 
-    linear_payload = torch.load(artifact_dir / "final_layer_glm_saga.pt", map_location="cpu")
+    final_layer_path = resolve_final_layer_path(artifact_dir)
+    linear_payload = torch.load(final_layer_path, map_location="cpu")
     normalization_payload = torch.load(artifact_dir / "final_layer_normalization.pt", map_location="cpu")
     feature_mean = normalization_payload["mean"].to(cfg.device).float()
     feature_std = normalization_payload["std"].to(cfg.device).float().clamp_min(1e-6)
@@ -234,6 +247,7 @@ def main() -> None:
     elapsed = time.perf_counter() - start
     payload: Dict[str, Any] = {
         "artifact_dir": str(artifact_dir),
+        "final_layer_path": str(final_layer_path),
         "val_tar": str(val_tar),
         "metrics": {
             "n": total,
