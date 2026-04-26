@@ -195,6 +195,29 @@ def build_weight_sweep(weight: torch.Tensor, bias: torch.Tensor, nec_values: Seq
     return sweep
 
 
+def load_saved_weight_sweep(artifact_dir: Path, nec_values: Sequence[int]) -> List[Dict[str, Any]] | None:
+    sweep = []
+    for nec in nec_values:
+        weight_path = artifact_dir / f"W_g@NEC={int(nec)}.pt"
+        bias_path = artifact_dir / f"b_g@NEC={int(nec)}.pt"
+        if not (weight_path.exists() and bias_path.exists()):
+            return None
+        weight = torch.load(weight_path, map_location="cpu").float()
+        bias = torch.load(bias_path, map_location="cpu").float()
+        nnz = int((weight.abs() > 1e-5).sum().item())
+        sweep.append(
+            {
+                "nec": int(nec),
+                "weight": weight,
+                "bias": bias,
+                "nnz": nnz,
+                "total": int(weight.numel()),
+                "weight_sparsity": 1.0 - (nnz / max(int(weight.numel()), 1)),
+            }
+        )
+    return sweep
+
+
 def _evaluate_logits(
     concept_logits: torch.Tensor,
     targets: torch.Tensor,
@@ -368,21 +391,24 @@ def main() -> None:
     backbone, head = build_model(cfg, n_concepts=len(concepts))
     head.load_state_dict(torch.load(source_run_dir / "concept_head_best.pt", map_location=cfg.device))
 
-    final_layer_path = resolve_final_layer_path(artifact_dir)
-    linear_payload = torch.load(final_layer_path, map_location="cpu")
     normalization_payload = torch.load(artifact_dir / "final_layer_normalization.pt", map_location="cpu")
     feature_mean = normalization_payload["mean"].to(cfg.device).float()
     feature_std = normalization_payload["std"].to(cfg.device).float().clamp_min(1e-6)
-    sweep = build_weight_sweep(
-        linear_payload["weight"].float(),
-        linear_payload["bias"].float(),
-        nec_values,
-        artifact_dir if args.save_truncated_weights else None,
-    )
+    sweep = load_saved_weight_sweep(artifact_dir, nec_values)
+    final_layer_path: Path | None = None
+    if sweep is None:
+        final_layer_path = resolve_final_layer_path(artifact_dir)
+        linear_payload = torch.load(final_layer_path, map_location="cpu")
+        sweep = build_weight_sweep(
+            linear_payload["weight"].float(),
+            linear_payload["bias"].float(),
+            nec_values,
+            artifact_dir if args.save_truncated_weights else None,
+        )
 
     payload: Dict[str, Any] = {
         "artifact_dir": str(artifact_dir),
-        "final_layer_path": str(final_layer_path),
+        "final_layer_path": str(final_layer_path) if final_layer_path is not None else "",
         "source_run_dir": str(source_run_dir),
         "nec_values": nec_values,
     }
