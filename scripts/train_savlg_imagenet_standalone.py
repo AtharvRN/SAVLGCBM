@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["train", "profile", "glm_only", "precompute_targets"],
+        choices=["train", "profile", "glm_only", "dense_only", "precompute_targets"],
         default="train",
     )
     parser.add_argument("--train_root", default="")
@@ -110,6 +110,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--saga_lam", type=float, default=5e-4)
     parser.add_argument("--saga_n_iters", type=int, default=80)
     parser.add_argument("--saga_verbose_every", type=int, default=10)
+    parser.add_argument("--dense_lr", type=float, default=1e-3)
+    parser.add_argument("--dense_n_iters", type=int, default=20)
     parser.add_argument("--feature_storage_dtype", choices=["fp16", "fp32"], default="fp16")
     parser.add_argument("--saga_table_device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--print_config", action="store_true")
@@ -175,6 +177,8 @@ class Config:
     saga_lam: float
     saga_n_iters: int
     saga_verbose_every: int
+    dense_lr: float
+    dense_n_iters: int
     feature_storage_dtype: str
     saga_table_device: str
     print_config: bool
@@ -239,6 +243,8 @@ def build_config(args: argparse.Namespace) -> Config:
         saga_lam=args.saga_lam,
         saga_n_iters=args.saga_n_iters,
         saga_verbose_every=max(1, int(args.saga_verbose_every)),
+        dense_lr=args.dense_lr,
+        dense_n_iters=max(1, int(args.dense_n_iters)),
         feature_storage_dtype=args.feature_storage_dtype,
         saga_table_device=args.saga_table_device,
         print_config=bool(args.print_config),
@@ -266,8 +272,8 @@ def validate_config(cfg: Config) -> None:
             raise ValueError("--train_root is required for train/profile mode")
         if not cfg.annotation_dir:
             raise ValueError("--annotation_dir is required for train/profile mode")
-    if cfg.mode == "glm_only" and not cfg.reuse_run_dir:
-        raise ValueError("--reuse_run_dir is required for glm_only mode")
+    if cfg.mode in {"glm_only", "dense_only"} and not cfg.reuse_run_dir:
+        raise ValueError("--reuse_run_dir is required for glm_only/dense_only mode")
     if cfg.mode == "precompute_targets" and not cfg.precomputed_target_dir:
         raise ValueError("--precomputed_target_dir is required for precompute_targets mode")
 
@@ -1590,6 +1596,134 @@ def train_sparse_final_layer(
     return payload
 
 
+def train_dense_final_layer(
+    train_feature_path: Path,
+    train_target_path: Path,
+    val_feature_path: Path,
+    val_target_path: Path,
+    feature_mean: torch.Tensor,
+    feature_std: torch.Tensor,
+    cfg: Config,
+    n_classes: int,
+    run_dir: Path,
+) -> Dict[str, Any]:
+    feature_mean_np = feature_mean.cpu().numpy()
+    feature_std_np = feature_std.cpu().numpy()
+    train_dataset = MemmapFeatureDataset(
+        train_feature_path,
+        train_target_path,
+        mean=feature_mean_np,
+        std=feature_std_np,
+        include_index=False,
+    )
+    val_dataset = MemmapFeatureDataset(
+        val_feature_path,
+        val_target_path,
+        mean=feature_mean_np,
+        std=feature_std_np,
+        include_index=False,
+    )
+    train_loader_kwargs: Dict[str, Any] = {
+        "batch_size": cfg.saga_batch_size,
+        "shuffle": True,
+        "num_workers": cfg.saga_workers,
+        "pin_memory": cfg.pin_memory,
+        "drop_last": False,
+    }
+    eval_loader_kwargs: Dict[str, Any] = {
+        "batch_size": cfg.saga_batch_size,
+        "shuffle": False,
+        "num_workers": cfg.saga_workers,
+        "pin_memory": cfg.pin_memory,
+        "drop_last": False,
+    }
+    if cfg.saga_workers > 0:
+        train_loader_kwargs["persistent_workers"] = True
+        train_loader_kwargs["prefetch_factor"] = cfg.saga_prefetch_factor
+        eval_loader_kwargs["persistent_workers"] = True
+        eval_loader_kwargs["prefetch_factor"] = cfg.saga_prefetch_factor
+
+    train_loader = DataLoader(train_dataset, **train_loader_kwargs)
+    val_loader = DataLoader(val_dataset, **eval_loader_kwargs)
+
+    linear = nn.Linear(int(train_dataset.features.shape[1]), int(n_classes), bias=True).to(cfg.device)
+    optimizer = torch.optim.Adam(linear.parameters(), lr=cfg.dense_lr)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
+
+    best_val_loss = float("inf")
+    best_state = None
+    history: List[Dict[str, Any]] = []
+    reset_cuda_peak_stats_if_needed(cfg)
+    start_time = time.perf_counter()
+
+    for epoch_idx in range(cfg.dense_n_iters):
+        linear.train()
+        total_train_loss = 0.0
+        total_examples = 0
+        for batch in train_loader:
+            features, targets = batch[0].to(cfg.device), batch[1].to(cfg.device)
+            optimizer.zero_grad(set_to_none=True)
+            logits = linear(features)
+            loss = F.cross_entropy(logits, targets, reduction="mean")
+            loss.backward()
+            optimizer.step()
+            batch_size = int(targets.shape[0])
+            total_train_loss += float(loss.item()) * batch_size
+            total_examples += batch_size
+
+        scheduler.step()
+        train_metrics = evaluate_final_layer(linear, train_loader, cfg.device)
+        val_metrics = evaluate_final_layer(linear, val_loader, cfg.device)
+        epoch_payload = {
+            "epoch": epoch_idx + 1,
+            "train": train_metrics,
+            "val": val_metrics,
+            "lr": float(scheduler.get_last_lr()[0]),
+        }
+        history.append(epoch_payload)
+        print(
+            f"[dense_final] epoch={epoch_idx + 1} "
+            f"train_top1={train_metrics['top1']:.4f} "
+            f"val_top1={val_metrics['top1']:.4f} "
+            f"val_loss={val_metrics['loss']:.4f}"
+        )
+        if val_metrics["loss"] < best_val_loss:
+            best_val_loss = val_metrics["loss"]
+            best_state = {
+                "weight": linear.weight.detach().cpu().clone(),
+                "bias": linear.bias.detach().cpu().clone(),
+                "epoch": epoch_idx + 1,
+                "train": train_metrics,
+                "val": val_metrics,
+            }
+
+    assert best_state is not None
+    payload = {
+        "best_epoch": int(best_state["epoch"]),
+        "best_val_loss": float(best_val_loss),
+        "train": best_state["train"],
+        "val": best_state["val"],
+        "history": history,
+        "nnz": int((best_state["weight"].abs() > 1e-5).sum().item()),
+        "total": int(best_state["weight"].numel()),
+        "elapsed_sec": time.perf_counter() - start_time,
+        "dense_lr": float(cfg.dense_lr),
+        "dense_n_iters": int(cfg.dense_n_iters),
+    }
+    payload.update(cuda_peak_stats_mb(cfg))
+
+    torch.save(
+        {
+            "weight": best_state["weight"],
+            "bias": best_state["bias"],
+            "epoch": best_state["epoch"],
+        },
+        run_dir / "final_layer_dense.pt",
+    )
+    (run_dir / "final_layer_dense_summary.json").write_text(json.dumps(payload, indent=2))
+    return payload
+
+
 def profile_pipeline(cfg: Config) -> Dict[str, Any]:
     concepts = load_concepts(cfg.concept_file)
     dataset = SafeImageFolderWithAnnotations(
@@ -1909,7 +2043,20 @@ def infer_n_classes_from_targets(*target_paths: Path) -> int:
     return max_class_id + 1
 
 
-def run_glm_only(cfg: Config) -> Dict[str, Any]:
+def resolve_reuse_run_context(
+    cfg: Config,
+) -> Tuple[
+    Path,
+    Path,
+    Path,
+    Path,
+    Path,
+    Path,
+    torch.Tensor,
+    torch.Tensor,
+    Dict[str, Any],
+    int,
+]:
     source_run_dir = Path(cfg.reuse_run_dir).resolve()
     if not source_run_dir.is_dir():
         raise FileNotFoundError(f"Missing reuse_run_dir: {source_run_dir}")
@@ -1937,13 +2084,34 @@ def run_glm_only(cfg: Config) -> Dict[str, Any]:
     else:
         feature_mean, feature_std, normalization_summary = compute_feature_stats_memmap(train_feature_path, cfg)
 
+    n_classes = infer_n_classes_from_targets(train_target_path, val_target_path)
+    return (
+        source_run_dir,
+        original_source_run_dir,
+        train_feature_path,
+        train_target_path,
+        val_feature_path,
+        val_target_path,
+        feature_mean,
+        feature_std,
+        normalization_summary,
+        n_classes,
+    )
+
+
+def initialize_reuse_run_dir(
+    cfg: Config,
+    original_source_run_dir: Path,
+    feature_mean: torch.Tensor,
+    feature_std: torch.Tensor,
+    normalization_summary: Dict[str, Any],
+) -> Path:
     run_dir = build_run_dir(cfg)
     (run_dir / "config.json").write_text(json.dumps(asdict(cfg), indent=2))
     (run_dir / "source_run_dir.txt").write_text(f"{original_source_run_dir}\n")
     source_concepts = original_source_run_dir / "concepts.txt"
     if source_concepts.exists():
         (run_dir / "concepts.txt").write_text(source_concepts.read_text())
-
     torch.save(
         {
             "mean": feature_mean,
@@ -1953,8 +2121,29 @@ def run_glm_only(cfg: Config) -> Dict[str, Any]:
         },
         run_dir / "final_layer_normalization.pt",
     )
+    return run_dir
 
-    n_classes = infer_n_classes_from_targets(train_target_path, val_target_path)
+
+def run_glm_only(cfg: Config) -> Dict[str, Any]:
+    (
+        _source_run_dir,
+        original_source_run_dir,
+        train_feature_path,
+        train_target_path,
+        val_feature_path,
+        val_target_path,
+        feature_mean,
+        feature_std,
+        normalization_summary,
+        n_classes,
+    ) = resolve_reuse_run_context(cfg)
+    run_dir = initialize_reuse_run_dir(
+        cfg,
+        original_source_run_dir,
+        feature_mean,
+        feature_std,
+        normalization_summary,
+    )
     final_layer_summary = train_sparse_final_layer(
         train_feature_path=train_feature_path,
         train_target_path=train_target_path,
@@ -1978,6 +2167,48 @@ def run_glm_only(cfg: Config) -> Dict[str, Any]:
     return result
 
 
+def run_dense_only(cfg: Config) -> Dict[str, Any]:
+    (
+        _source_run_dir,
+        original_source_run_dir,
+        train_feature_path,
+        train_target_path,
+        val_feature_path,
+        val_target_path,
+        feature_mean,
+        feature_std,
+        normalization_summary,
+        n_classes,
+    ) = resolve_reuse_run_context(cfg)
+    run_dir = initialize_reuse_run_dir(
+        cfg,
+        original_source_run_dir,
+        feature_mean,
+        feature_std,
+        normalization_summary,
+    )
+    final_layer_summary = train_dense_final_layer(
+        train_feature_path=train_feature_path,
+        train_target_path=train_target_path,
+        val_feature_path=val_feature_path,
+        val_target_path=val_target_path,
+        feature_mean=feature_mean,
+        feature_std=feature_std,
+        cfg=cfg,
+        n_classes=n_classes,
+        run_dir=run_dir,
+    )
+    result = {
+        "mode": "dense_only",
+        "source_run_dir": str(original_source_run_dir),
+        "run_dir": str(run_dir),
+        "n_classes": n_classes,
+        "final_layer": final_layer_summary,
+    }
+    (run_dir / "summary.json").write_text(json.dumps(result, indent=2))
+    return result
+
+
 def main() -> None:
     cfg = build_config(parse_args())
     validate_config(cfg)
@@ -1988,6 +2219,8 @@ def main() -> None:
         result = profile_pipeline(cfg)
     elif cfg.mode == "glm_only":
         result = run_glm_only(cfg)
+    elif cfg.mode == "dense_only":
+        result = run_dense_only(cfg)
     elif cfg.mode == "precompute_targets":
         result = run_precompute_targets(cfg)
     else:
