@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_glm_steps", type=int, default=50)
     parser.add_argument("--epsilon", type=float, default=1e-3)
     parser.add_argument("--alpha", type=float, default=0.99)
+    parser.add_argument("--tol", type=float, default=1e-4, help="Solver convergence tolerance for GLM-SAGA.")
     parser.add_argument("--table_device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--verbose_every", type=int, default=1)
     parser.add_argument("--nec_values", default="5,10,15,20,25,30")
@@ -361,6 +362,7 @@ def main() -> None:
         args.n_iters,
         args.alpha,
         table_device=args.table_device,
+        tol=args.tol,
         epsilon=args.epsilon,
         k=args.max_glm_steps,
         val_loader=val_loader,
@@ -405,6 +407,7 @@ def main() -> None:
             "max_glm_steps": args.max_glm_steps,
             "epsilon": args.epsilon,
             "alpha": args.alpha,
+            "tol": args.tol,
             "table_device": args.table_device,
             "verbose_every": args.verbose_every,
             "pin_memory": bool(args.pin_memory),
