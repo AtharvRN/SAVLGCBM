@@ -106,7 +106,21 @@ def resolve_final_layer_path(artifact_dir: Path) -> Path:
     glm_path = artifact_dir / "final_layer_glm_saga.pt"
     if glm_path.exists():
         return glm_path
+    path_sweep = artifact_dir / "glm_path.pt"
+    if path_sweep.exists():
+        return path_sweep
     raise FileNotFoundError(f"no final layer artifact found under {artifact_dir}")
+
+
+def load_final_layer_payload(final_layer_path: Path) -> Dict[str, torch.Tensor]:
+    payload = torch.load(final_layer_path, map_location="cpu")
+    if isinstance(payload, dict) and "weight" in payload and "bias" in payload:
+        return {"weight": payload["weight"].float(), "bias": payload["bias"].float()}
+    if isinstance(payload, dict) and "best" in payload:
+        best = payload["best"]
+        if isinstance(best, dict) and "weight" in best and "bias" in best:
+            return {"weight": best["weight"].float(), "bias": best["bias"].float()}
+    raise ValueError(f"could not load weight/bias from final layer artifact: {final_layer_path}")
 
 
 def load_val_targets(devkit_dir: Path) -> List[int]:
@@ -402,14 +416,14 @@ def main() -> None:
     normalization_payload = torch.load(artifact_dir / "final_layer_normalization.pt", map_location="cpu")
     feature_mean = normalization_payload["mean"].to(cfg.device).float()
     feature_std = normalization_payload["std"].to(cfg.device).float().clamp_min(1e-6)
-    sweep = load_saved_weight_sweep(artifact_dir, nec_values)
+    sweep = None if args.save_truncated_weights else load_saved_weight_sweep(artifact_dir, nec_values)
     final_layer_path: Path | None = None
     if sweep is None:
         final_layer_path = resolve_final_layer_path(artifact_dir)
-        linear_payload = torch.load(final_layer_path, map_location="cpu")
+        linear_payload = load_final_layer_payload(final_layer_path)
         sweep = build_weight_sweep(
-            linear_payload["weight"].float(),
-            linear_payload["bias"].float(),
+            linear_payload["weight"],
+            linear_payload["bias"],
             nec_values,
             artifact_dir if args.save_truncated_weights else None,
         )
