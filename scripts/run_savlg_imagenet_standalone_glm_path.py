@@ -44,6 +44,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Stop the lambda path once nnz/total exceeds this fraction.",
     )
+    parser.add_argument(
+        "--cache_features_device",
+        choices=["none", "cuda"],
+        default="none",
+        help="Load normalized feature tensors once onto the selected device and bypass DataLoader/memmap per epoch.",
+    )
+    parser.add_argument(
+        "--cache_chunk_rows",
+        type=int,
+        default=8192,
+        help="Rows per CPU staging chunk when --cache_features_device is enabled.",
+    )
     return parser.parse_args()
 
 
@@ -125,6 +137,79 @@ def build_loader(
     return DataLoader(**kwargs)
 
 
+class TensorFeatureDataset:
+    def __init__(self, features: torch.Tensor, targets: torch.Tensor) -> None:
+        self.features = features
+        self.targets = targets
+
+    def __len__(self) -> int:
+        return int(self.features.shape[0])
+
+
+class TensorBatchLoader:
+    def __init__(
+        self,
+        features: torch.Tensor,
+        targets: torch.Tensor,
+        *,
+        batch_size: int,
+        include_index: bool,
+        shuffle: bool,
+    ) -> None:
+        self.dataset = TensorFeatureDataset(features, targets)
+        self.batch_size = int(batch_size)
+        self.include_index = include_index
+        self.shuffle = shuffle
+
+    def __len__(self) -> int:
+        n = len(self.dataset)
+        return (n + self.batch_size - 1) // self.batch_size
+
+    def __iter__(self):
+        features = self.dataset.features
+        targets = self.dataset.targets
+        n = len(self.dataset)
+        if self.shuffle:
+            order = torch.randperm(n, device=features.device)
+            for start in range(0, n, self.batch_size):
+                idx = order[start : start + self.batch_size]
+                if self.include_index:
+                    yield features[idx], targets[idx], idx
+                else:
+                    yield features[idx], targets[idx]
+            return
+
+        for start in range(0, n, self.batch_size):
+            end = min(start + self.batch_size, n)
+            if self.include_index:
+                idx = torch.arange(start, end, device=features.device)
+                yield features[start:end], targets[start:end], idx
+            else:
+                yield features[start:end], targets[start:end]
+
+
+def load_cached_feature_tensors(
+    feature_path: Path,
+    target_path: Path,
+    *,
+    mean: np.ndarray,
+    std: np.ndarray,
+    device: str,
+    chunk_rows: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    features_np = np.load(feature_path, mmap_mode="r")
+    targets_np = np.load(target_path, mmap_mode="r")
+    features = torch.empty(features_np.shape, dtype=torch.float32, device=device)
+    chunk_rows = max(1, int(chunk_rows))
+    for start in range(0, int(features_np.shape[0]), chunk_rows):
+        end = min(start + chunk_rows, int(features_np.shape[0]))
+        chunk = np.asarray(features_np[start:end], dtype=np.float32)
+        chunk = (chunk - mean) / std
+        features[start:end].copy_(torch.from_numpy(np.ascontiguousarray(chunk)).to(device, non_blocking=True))
+    targets = torch.from_numpy(np.array(targets_np, dtype=np.int64, copy=True)).to(device, non_blocking=True)
+    return features, targets
+
+
 def select_path_points_for_nec(path: Sequence[Dict[str, Any]], n_concepts: int, nec_values: Sequence[int]) -> List[Dict[str, Any]]:
     sparsities = [float((params["weight"].abs() > 1e-5).float().mean().item()) for params in path]
     selections: List[Dict[str, Any]] = []
@@ -198,30 +283,68 @@ def main() -> None:
         if not path.exists():
             raise FileNotFoundError(f"Missing feature artifact: {path}")
 
-    train_loader = build_loader(
-        train_feature_path,
-        train_target_path,
-        batch_size=args.saga_batch_size,
-        workers=args.saga_workers,
-        pin_memory=args.pin_memory,
-        prefetch_factor=args.saga_prefetch_factor,
-        mean=feature_mean,
-        std=feature_std,
-        include_index=True,
-        shuffle=True,
-    )
-    val_loader = build_loader(
-        val_feature_path,
-        val_target_path,
-        batch_size=args.saga_batch_size,
-        workers=args.saga_workers,
-        pin_memory=args.pin_memory,
-        prefetch_factor=args.saga_prefetch_factor,
-        mean=feature_mean,
-        std=feature_std,
-        include_index=False,
-        shuffle=False,
-    )
+    if args.cache_features_device == "cuda":
+        cache_device = args.device
+        print(f"loading normalized train features to {cache_device}...")
+        train_features, train_targets = load_cached_feature_tensors(
+            train_feature_path,
+            train_target_path,
+            mean=feature_mean,
+            std=feature_std,
+            device=cache_device,
+            chunk_rows=args.cache_chunk_rows,
+        )
+        train_loader = TensorBatchLoader(
+            train_features,
+            train_targets,
+            batch_size=args.saga_batch_size,
+            include_index=True,
+            shuffle=True,
+        )
+        if args.skip_val_eval:
+            val_loader = None
+        else:
+            print(f"loading normalized val features to {cache_device}...")
+            val_features, val_targets = load_cached_feature_tensors(
+                val_feature_path,
+                val_target_path,
+                mean=feature_mean,
+                std=feature_std,
+                device=cache_device,
+                chunk_rows=args.cache_chunk_rows,
+            )
+            val_loader = TensorBatchLoader(
+                val_features,
+                val_targets,
+                batch_size=args.saga_batch_size,
+                include_index=False,
+                shuffle=False,
+            )
+    else:
+        train_loader = build_loader(
+            train_feature_path,
+            train_target_path,
+            batch_size=args.saga_batch_size,
+            workers=args.saga_workers,
+            pin_memory=args.pin_memory,
+            prefetch_factor=args.saga_prefetch_factor,
+            mean=feature_mean,
+            std=feature_std,
+            include_index=True,
+            shuffle=True,
+        )
+        val_loader = build_loader(
+            val_feature_path,
+            val_target_path,
+            batch_size=args.saga_batch_size,
+            workers=args.saga_workers,
+            pin_memory=args.pin_memory,
+            prefetch_factor=args.saga_prefetch_factor,
+            mean=feature_mean,
+            std=feature_std,
+            include_index=False,
+            shuffle=False,
+        )
 
     n_features = int(train_loader.dataset.features.shape[1])
     n_classes = infer_n_classes(train_target_path, val_target_path)
@@ -288,6 +411,8 @@ def main() -> None:
             "skip_train_eval": bool(args.skip_train_eval),
             "skip_val_eval": bool(args.skip_val_eval),
             "max_sparsity": args.max_sparsity,
+            "cache_features_device": args.cache_features_device,
+            "cache_chunk_rows": args.cache_chunk_rows,
         },
         "elapsed_sec": elapsed,
         "best": {

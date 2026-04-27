@@ -291,10 +291,6 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                     break
                 n_classes = y.size(1)
 
-        eye = None
-        if family == 'multinomial':
-            eye = ch.eye(n_classes, device=weight_device)
-
         # Storage for scalar gradients and averages
         if state is None: 
             a_table = ch.zeros(n_ex, n_classes).to(table_device)
@@ -309,7 +305,8 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
         obj_best = None
         nni = 0
         for t in tqdm(range(nepochs)): 
-            total_loss = 0
+            total_loss = ch.zeros((), device=weight_device)
+            criteria = None
             for batch in loader: 
                 if len(batch) == 3: 
                     X,y,idx = batch
@@ -335,10 +332,10 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                     else: 
                         loss = F.cross_entropy(out, y_device, reduction='none')
                         loss = (loss*w).mean()
-                    target = eye[y_device] # change to OHE
 
                     # Calculate new scalar gradient 
-                    logits = F.softmax(out, dim=-1)
+                    a = F.softmax(out, dim=-1)
+                    a[ch.arange(y_device.numel(), device=weight_device), y_device] -= 1
                 elif family == 'gaussian': 
                     y_device = y.to(weight_device)
                     if w is None: 
@@ -350,19 +347,23 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
 
                     # Calculate new scalar gradient 
                     logits = out
+                    a = logits - target
                 else: 
                     raise ValueError(f"Unknown family: {family}")
-                total_loss += loss.item()*X.size(0)
+                total_loss += loss.detach()*X.size(0)
 
 
                 # BS x NUM_CLASSES
-                a = logits - target
                 if w is not None: 
                     a = a*w.unsqueeze(1)
-                if a_table.device == weight_device:
-                    a_prev = a_table[idx]
+                if idx.device != a_table.device:
+                    table_idx = idx.to(a_table.device, non_blocking=True)
                 else:
-                    a_prev = a_table[idx].to(weight_device, non_blocking=True)
+                    table_idx = idx
+                if a_table.device == weight_device:
+                    a_prev = a_table[table_idx]
+                else:
+                    a_prev = a_table[table_idx].to(weight_device, non_blocking=True)
 
                 # weight parameter
                 # Compute the same class-by-feature gradient without materializing
@@ -394,9 +395,9 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
 
                 # update table and averages
                 if a_table.device == weight_device:
-                    a_table[idx] = a
+                    a_table[table_idx] = a
                 else:
-                    a_table[idx] = a.to(table_device, non_blocking=True)
+                    a_table[table_idx] = a.to(table_device, non_blocking=True)
                 w_grad_avg.add_((w_grad - w_grad_prev)*X.size(0)/n_ex)
                 b_grad_avg.add_((b_grad - b_grad_prev)*X.size(0)/n_ex)
 
@@ -405,17 +406,17 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                     db = (bias_new - bias).norm(p=2)
                     criteria = ch.sqrt(dw**2 + db**2)
 
-                    if criteria.item() <= tol: 
-                        return {
-                            "a_table": a_table.cpu(), 
-                            "w_grad_avg": w_grad_avg.cpu(), 
-                            "b_grad_avg": b_grad_avg.cpu()
-                        }
-
                 weight.data = weight_new
                 bias.data = bias_new
 
             saga_obj = total_loss/n_ex + lam * alpha * weight.norm(p=1) + 0.5 * lam * (1 - alpha) * (weight**2).sum()
+
+            if lookbehind is None and criteria is not None and criteria.item() <= tol:
+                return {
+                    "a_table": a_table.cpu(), 
+                    "w_grad_avg": w_grad_avg.cpu(), 
+                    "b_grad_avg": b_grad_avg.cpu()
+                }
 
             # save amount of improvement
             obj_history.append(saga_obj.item())
