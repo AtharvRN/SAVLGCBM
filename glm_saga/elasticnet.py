@@ -365,8 +365,11 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                     a_prev = a_table[idx].to(weight_device, non_blocking=True)
 
                 # weight parameter
-                w_grad = (a.unsqueeze(2) * X.unsqueeze(1)).mean(0) 
-                w_grad_prev = (a_prev.unsqueeze(2) * X.unsqueeze(1)).mean(0)
+                # Compute the same class-by-feature gradient without materializing
+                # the enormous (batch, classes, features) broadcast tensor.
+                bs = X.size(0)
+                w_grad = a.transpose(0, 1).matmul(X).div_(bs)
+                w_grad_prev = a_prev.transpose(0, 1).matmul(X).div_(bs)
                 w_saga = w_grad - w_grad_prev + w_grad_avg
                 weight_new = weight - lr*w_saga
 

@@ -36,6 +36,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--table_device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--verbose_every", type=int, default=1)
     parser.add_argument("--nec_values", default="5,10,15,20,25,30")
+    parser.add_argument("--skip_train_eval", action="store_true", help="Skip the full train-set metric pass after each lambda.")
+    parser.add_argument("--skip_val_eval", action="store_true", help="Skip the full val-set metric pass after each lambda.")
+    parser.add_argument(
+        "--max_sparsity",
+        type=float,
+        default=None,
+        help="Stop the lambda path once nnz/total exceeds this fraction.",
+    )
     return parser.parse_args()
 
 
@@ -238,8 +246,9 @@ def main() -> None:
         n_ex=len(train_loader.dataset),
         n_classes=n_classes,
         verbose=args.verbose_every,
-        eval_train=True,
-        eval_val=True,
+        max_sparsity=args.max_sparsity,
+        eval_train=not args.skip_train_eval,
+        eval_val=not args.skip_val_eval,
         eval_test=False,
     )
     elapsed = time.perf_counter() - start
@@ -276,6 +285,9 @@ def main() -> None:
             "table_device": args.table_device,
             "verbose_every": args.verbose_every,
             "pin_memory": bool(args.pin_memory),
+            "skip_train_eval": bool(args.skip_train_eval),
+            "skip_val_eval": bool(args.skip_val_eval),
+            "max_sparsity": args.max_sparsity,
         },
         "elapsed_sec": elapsed,
         "best": {
