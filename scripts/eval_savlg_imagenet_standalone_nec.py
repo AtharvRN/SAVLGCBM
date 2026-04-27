@@ -31,11 +31,20 @@ VAL_RE = "ILSVRC2012_val_"
 
 
 def weight_truncation(weight: torch.Tensor, sparsity: float) -> torch.Tensor:
-    numel = weight.numel()
-    num_zeros = int((1 - sparsity) * numel)
-    threshold = torch.sort(weight.flatten().abs())[0][num_zeros]
-    sparse_weight = weight.clone().detach()
-    sparse_weight[weight.abs() < threshold] = 0
+    """Keep the top-k concept weights for each output class.
+
+    NEC is defined per class, not globally over the full class-by-concept
+    matrix. A global top-k can starve low-magnitude classes at small NEC.
+    """
+    num_concepts = int(weight.shape[1])
+    k = int(round(float(sparsity) * num_concepts))
+    if k <= 0:
+        return torch.zeros_like(weight)
+    if k >= num_concepts:
+        return weight.clone().detach()
+    topk_idx = weight.abs().topk(k=k, dim=1).indices
+    sparse_weight = torch.zeros_like(weight)
+    sparse_weight.scatter_(1, topk_idx, weight.gather(1, topk_idx))
     return sparse_weight
 
 
