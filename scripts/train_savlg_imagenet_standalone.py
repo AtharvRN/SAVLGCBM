@@ -467,7 +467,8 @@ class SafeImageFolderWithAnnotations(Dataset):
             classes[class_id] = class_name
 
         class ManifestDataset:
-            pass
+            def __len__(self) -> int:
+                return len(self.samples)
 
         dataset = ManifestDataset()
         dataset.samples = samples

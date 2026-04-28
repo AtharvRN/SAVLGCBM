@@ -1,0 +1,397 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: savlg-imagenet-full-a100-7ep-dense
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: gp-engine.hpc.okstate.edu
+
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 850Gi
+        - name: work
+          emptyDir: {}
+        - name: artifacts-pvc
+          persistentVolumeClaim:
+            claimName: atharv-rwx-storage-1ti
+        - name: dev-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Gi
+        - name: kaggle-json
+          secret:
+            secretName: kaggle-json
+            optional: true
+
+      initContainers:
+        - name: clone-repo
+          image: alpine/git:2.45.2
+          command: ["sh", "-lc"]
+          env:
+            - name: REPO_URL
+              value: "https://github.com/AtharvRN/SAVLGCBM.git"
+            - name: REPO_REF
+              value: "imagenet-training"
+          args:
+            - |
+              set -euo pipefail
+              echo "[clone-repo] cloning ${REPO_URL} ref=${REPO_REF}"
+              git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" /work/SAVLGCBM
+              echo "[clone-repo] commit $(git -C /work/SAVLGCBM rev-parse --short HEAD)"
+              test -f /work/SAVLGCBM/scripts/train_savlg_imagenet_standalone.py
+              test -f /work/SAVLGCBM/scripts/precompute_savlg_imagenet_targets.py
+              test -f /work/SAVLGCBM/scripts/log_system_telemetry.py
+              grep -q -- "--final_layer_type" /work/SAVLGCBM/scripts/train_savlg_imagenet_standalone.py
+              mkdir -p /work/out
+              chmod 777 /work /work/out
+              chmod -R a+rX /work/SAVLGCBM
+              chmod -R a+rwX /work/SAVLGCBM/envs
+          volumeMounts:
+            - name: work
+              mountPath: /work
+          resources:
+            requests:
+              cpu: "1"
+              memory: "4Gi"
+            limits:
+              cpu: "1"
+              memory: "4Gi"
+
+        - name: stage-data
+          image: ubuntu:22.04
+          command: ["bash", "-lc"]
+          env:
+            - name: KAGGLE_URL
+              value: "https://www.kaggle.com/api/v1/datasets/download/mayurmadnani/imagenet-dataset"
+            - name: ANNOT_TRAIN_URL
+              value: "https://s3-imagenet-annotations.s3.us-east-1.amazonaws.com/imagenet_train.tar.gz"
+            - name: ANNOT_VAL_URL
+              value: "https://s3-imagenet-annotations.s3.us-east-1.amazonaws.com/imagenet_val.tar.gz"
+          args:
+            - |
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              STAGE_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+              STAGE_TOTAL_START="$(date +%s)"
+              apt-get update -y >/dev/null
+              apt-get install -y --no-install-recommends ca-certificates curl jq unzip wget >/dev/null
+
+              mkdir -p /data/root /data/datasets/imagenet/ILSVRC/Data/CLS-LOC
+              chmod 777 /data/root
+
+              if [[ ! -f /secrets/kaggle.json ]]; then
+                echo "Missing /secrets/kaggle.json. Create secret kaggle-json and retry." >&2
+                exit 2
+              fi
+              KAGGLE_KEY="$(jq -r .key /secrets/kaggle.json)"
+              if [[ -z "${KAGGLE_KEY:-}" || "$KAGGLE_KEY" == "null" ]]; then
+                echo "Could not read .key from /secrets/kaggle.json" >&2
+                exit 2
+              fi
+
+              echo "[stage-data] downloading ImageNet zip to local /data"
+              DOWNLOAD_START="$(date +%s)"
+              wget -O /data/root/imagenet-dataset.zip \
+                --header="Authorization: Bearer ${KAGGLE_KEY}" \
+                --tries=50 --timeout=30 \
+                "$KAGGLE_URL"
+              DOWNLOAD_END="$(date +%s)"
+              DOWNLOAD_SEC="$((DOWNLOAD_END - DOWNLOAD_START))"
+              echo "[stage-data] download_sec=${DOWNLOAD_SEC}"
+
+              echo "[stage-data] unzipping to /data/root"
+              UNZIP_START="$(date +%s)"
+              unzip -n -q /data/root/imagenet-dataset.zip -d /data/root
+              rm -f /data/root/imagenet-dataset.zip
+              UNZIP_END="$(date +%s)"
+              UNZIP_SEC="$((UNZIP_END - UNZIP_START))"
+              echo "[stage-data] unzip_sec=${UNZIP_SEC}"
+
+              echo "[stage-data] wiring expected torchvision-style paths"
+              DATA_BASE=/data/root
+              if [[ ! -d "${DATA_BASE}/train" || ! -d "${DATA_BASE}/val" ]]; then
+                CANDIDATES=()
+                while IFS= read -r -d '' d; do CANDIDATES+=("$d"); done < <(find "${DATA_BASE}" -mindepth 1 -maxdepth 1 -type d -print0)
+                if [[ ${#CANDIDATES[@]} -eq 1 && -d "${CANDIDATES[0]}/train" && -d "${CANDIDATES[0]}/val" ]]; then
+                  DATA_BASE="${CANDIDATES[0]}"
+                else
+                  echo "Could not find train/val dirs after unzip under /data/root" >&2
+                  ls -la /data/root >&2 || true
+                  exit 3
+                fi
+              fi
+              ln -sfn "${DATA_BASE}/train" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/train
+              ln -sfn "${DATA_BASE}/val" /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/ImageNet_val
+
+              mkdir -p /data/root/imagenet_annotations
+              chmod 777 /data/root/imagenet_annotations
+              ANNOT_SRC_ROOT="/data/root/annotation_archives"
+              mkdir -p "${ANNOT_SRC_ROOT}"
+              echo "[stage-data] downloading annotation tarballs from public S3"
+              curl -L --fail --retry 5 --retry-delay 2 --output "${ANNOT_SRC_ROOT}/imagenet_train.tar.gz" "${ANNOT_TRAIN_URL}"
+              curl -L --fail --retry 5 --retry-delay 2 --output "${ANNOT_SRC_ROOT}/imagenet_val.tar.gz" "${ANNOT_VAL_URL}"
+              echo "[stage-data] extracting annotation tarballs to local /data"
+              ANNOT_START="$(date +%s)"
+              tar -xzf "${ANNOT_SRC_ROOT}/imagenet_train.tar.gz" -C /data/root/imagenet_annotations
+              tar -xzf "${ANNOT_SRC_ROOT}/imagenet_val.tar.gz" -C /data/root/imagenet_annotations
+              ANNOT_END="$(date +%s)"
+              ANNOT_SEC="$((ANNOT_END - ANNOT_START))"
+              echo "[stage-data] annotation_extract_sec=${ANNOT_SEC}"
+
+              mkdir -p /artifacts/savlg_imagenet_standalone_runs
+              chmod 777 /artifacts/savlg_imagenet_standalone_runs
+              STAGE_TOTAL_END="$(date +%s)"
+              STAGE_TOTAL_SEC="$((STAGE_TOTAL_END - STAGE_TOTAL_START))"
+              STAGE_PROFILE="/artifacts/savlg_imagenet_standalone_runs/staging_full_${STAGE_STAMP}_${HOSTNAME:-pod}.json"
+              cat > "${STAGE_PROFILE}" <<EOF
+              {
+                "stage_stamp": "${STAGE_STAMP}",
+                "hostname": "${HOSTNAME:-pod}",
+                "download_sec": ${DOWNLOAD_SEC},
+                "unzip_sec": ${UNZIP_SEC},
+                "annotation_extract_sec": ${ANNOT_SEC},
+                "total_sec": ${STAGE_TOTAL_SEC},
+                "train_root": "${DATA_BASE}/train",
+                "val_root": "${DATA_BASE}/val",
+                "annotation_root": "/data/root/imagenet_annotations"
+              }
+              EOF
+              echo "[stage-data] profile_json=${STAGE_PROFILE}"
+              echo "[stage-data] done"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: kaggle-json
+              mountPath: /secrets
+            - name: artifacts-pvc
+              mountPath: /artifacts
+          resources:
+            requests:
+              cpu: "4"
+              memory: "16Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+
+      containers:
+        - name: train
+          image: ghcr.io/atharvrn/savlgcbm-cbm:pt222-cu121
+          command: ["bash", "-lc"]
+          env:
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: MKL_NUM_THREADS
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: IMAGENET_TRAIN_ROOT
+              value: /data/datasets/imagenet/ILSVRC/Data/CLS-LOC/train
+            - name: IMAGENET_ANNOTATION_ROOT
+              value: /data/root/imagenet_annotations
+            - name: TORCH_HOME
+              value: /persist/torch_home
+          args:
+            - |
+              set -euo pipefail
+              cd /work/SAVLGCBM
+
+              PERSIST_BASE="/persist/savlg_imagenet_standalone_runs"
+              RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+              RUN_NAME="savlg_imagenet_full_7ep_a100_dense_${RUN_STAMP}_${HOSTNAME:-pod}"
+              RUN_DIR="${PERSIST_BASE}/${RUN_NAME}"
+              FEATURE_WORK_DIR="/data/standalone_feature_cache/${RUN_NAME}"
+              PRECOMPUTED_TARGET_DIR="/data/precomputed_targets/${RUN_NAME}"
+              TELEMETRY_LOG="${PERSIST_BASE}/${RUN_NAME}.system_telemetry.csv"
+              BOOTSTRAP_LOG="${PERSIST_BASE}/${RUN_NAME}.bootstrap.log"
+              mkdir -p "${PERSIST_BASE}" "${TORCH_HOME}"
+              exec > >(tee -a "${BOOTSTRAP_LOG}") 2>&1
+              echo "[train] artifact run dir: ${RUN_DIR}"
+              echo "[train] feature work dir: ${FEATURE_WORK_DIR}"
+              echo "[train] precomputed target dir: ${PRECOMPUTED_TARGET_DIR}"
+
+              copy_dir_low_priority() {
+                local src="$1"
+                local dst="$2"
+                mkdir -p "${dst}"
+                if command -v ionice >/dev/null 2>&1; then
+                  ionice -c3 nice -n 19 cp -a "${src}/." "${dst}/"
+                else
+                  nice -n 19 cp -a "${src}/." "${dst}/"
+                fi
+              }
+
+              source /opt/conda/etc/profile.d/conda.sh
+              export MKL_INTERFACE_LAYER=GNU
+              if ! conda env list | awk '{print $1}' | grep -qx cbm; then
+                echo "Expected prebuilt conda env 'cbm' in image, but it was not found." >&2
+                exit 5
+              fi
+              conda activate cbm
+
+              if [[ ! -d "${IMAGENET_TRAIN_ROOT}" ]]; then
+                echo "Missing IMAGENET_TRAIN_ROOT=${IMAGENET_TRAIN_ROOT}" >&2
+                exit 4
+              fi
+              if [[ ! -d "${IMAGENET_ANNOTATION_ROOT}/imagenet_train" ]]; then
+                echo "Missing ${IMAGENET_ANNOTATION_ROOT}/imagenet_train" >&2
+                exit 4
+              fi
+              if [[ ! -f "${IMAGENET_ANNOTATION_ROOT}/imagenet_train/0.json" ]]; then
+                echo "Expected index-based GDINO annotations under ${IMAGENET_ANNOTATION_ROOT}/imagenet_train" >&2
+                exit 4
+              fi
+
+              echo "[train] precomputing full ImageNet SAVLG targets"
+              python -u scripts/precompute_savlg_imagenet_targets.py \
+                --train_root "${IMAGENET_TRAIN_ROOT}" \
+                --annotation_dir "${IMAGENET_ANNOTATION_ROOT}" \
+                --precomputed_target_dir "${PRECOMPUTED_TARGET_DIR}" \
+                --spatial_target_mode soft_box \
+                --batch_size 256 \
+                --workers 16 \
+                --prefetch_factor 4 \
+                --persistent_workers \
+                --pin_memory \
+                --device cpu \
+                --print_config
+
+              mkdir -p "${RUN_DIR}"
+              echo "[copy] starting background precomputed target copy to ${RUN_DIR}/precomputed_targets"
+              (
+                set -euo pipefail
+                copy_dir_low_priority "${PRECOMPUTED_TARGET_DIR}" "${RUN_DIR}/precomputed_targets"
+                touch "${RUN_DIR}/precomputed_targets_copy.done"
+                echo "[copy] precomputed target copy complete"
+              ) &
+              TARGET_COPY_PID=$!
+
+              python -u scripts/train_savlg_imagenet_standalone.py \
+                --train_root "${IMAGENET_TRAIN_ROOT}" \
+                --annotation_dir "${IMAGENET_ANNOTATION_ROOT}" \
+                --precomputed_target_dir "${PRECOMPUTED_TARGET_DIR}" \
+                --save_dir "${PERSIST_BASE}" \
+                --run_name "${RUN_NAME}" \
+                --feature_dir "${FEATURE_WORK_DIR}" \
+                --epochs 7 \
+                --batch_size 256 \
+                --workers 16 \
+                --prefetch_factor 4 \
+                --amp fp16 \
+                --val_split 0.1 \
+                --branch_arch dual \
+                --spatial_branch_mode multiscale_conv45 \
+                --spatial_stage conv5 \
+                --residual_alpha 0.8 \
+                --spatial_target_mode soft_box \
+                --spatial_loss_mode soft_align \
+                --filter_concepts_by_count \
+                --concept_min_count 1 \
+                --loss_global_w 1.0 \
+                --loss_mask_w 0.25 \
+                --loss_dice_w 0.0 \
+                --pin_memory \
+                --persistent_workers \
+                --channels_last \
+                --tf32 \
+                --feature_storage_dtype fp16 \
+                --final_layer_type dense \
+                --dense_lr 1e-3 \
+                --dense_n_iters 3 \
+                --log_every 20 \
+                --print_config &
+              TRAIN_PID=$!
+
+              echo "[copy] starting background feature-copy watcher"
+              (
+                set -euo pipefail
+                while kill -0 "${TRAIN_PID}" >/dev/null 2>&1; do
+                  if [[ -f "${RUN_DIR}/final_layer_normalization.pt" ]]; then
+                    copy_dir_low_priority "${FEATURE_WORK_DIR}" "${RUN_DIR}/features"
+                    touch "${RUN_DIR}/features_copy.done"
+                    echo "[copy] feature copy complete"
+                    exit 0
+                  fi
+                  sleep 30
+                done
+                if [[ -d "${FEATURE_WORK_DIR}" ]]; then
+                  copy_dir_low_priority "${FEATURE_WORK_DIR}" "${RUN_DIR}/features"
+                  touch "${RUN_DIR}/features_copy.done"
+                  echo "[copy] feature copy complete after train exit"
+                fi
+              ) &
+              FEATURE_COPY_PID=$!
+
+              python -u scripts/log_system_telemetry.py \
+                --pid "${TRAIN_PID}" \
+                --interval 5 \
+                --output "${TELEMETRY_LOG}" &
+              MONITOR_PID=$!
+
+              set +e
+              wait "${TRAIN_PID}"
+              TRAIN_EXIT=$?
+              kill "${MONITOR_PID}" >/dev/null 2>&1 || true
+              wait "${MONITOR_PID}" >/dev/null 2>&1 || true
+              set -e
+
+              mkdir -p "${RUN_DIR}"
+              COPY_EXIT=0
+              set +e
+              wait "${TARGET_COPY_PID}"
+              TARGET_COPY_EXIT=$?
+              wait "${FEATURE_COPY_PID}"
+              FEATURE_COPY_EXIT=$?
+              set -e
+              if [[ "${TARGET_COPY_EXIT}" -ne 0 ]]; then
+                COPY_EXIT="${TARGET_COPY_EXIT}"
+                echo "[copy] precomputed target copy failed with exit ${TARGET_COPY_EXIT}" >&2
+              fi
+              if [[ "${FEATURE_COPY_EXIT}" -ne 0 ]]; then
+                COPY_EXIT="${FEATURE_COPY_EXIT}"
+                echo "[copy] feature copy failed with exit ${FEATURE_COPY_EXIT}" >&2
+              fi
+              cat > "${RUN_DIR}/copy_status.json" <<EOF
+              {
+                "precomputed_targets_copied": $(test -f "${RUN_DIR}/precomputed_targets_copy.done" && echo true || echo false),
+                "features_copied": $(test -f "${RUN_DIR}/features_copy.done" && echo true || echo false),
+                "copy_exit": ${COPY_EXIT}
+              }
+              EOF
+              if [[ -f "${TELEMETRY_LOG}" ]]; then
+                mv "${TELEMETRY_LOG}" "${RUN_DIR}/system_telemetry.csv"
+              fi
+              if [[ -d "${RUN_DIR}" && -f "${BOOTSTRAP_LOG}" ]]; then
+                mkdir -p "${RUN_DIR}/logs"
+                cat "${BOOTSTRAP_LOG}" >> "${RUN_DIR}/logs/entrypoint.log"
+                rm -f "${BOOTSTRAP_LOG}"
+              fi
+              printf '%s\n' "${RUN_DIR}" | tee "${PERSIST_BASE}/LATEST_RUN_FULL_7EP_A100_DENSE.txt"
+              echo "${TRAIN_EXIT}" > "${RUN_DIR}/exit_code.txt"
+              if [[ "${TRAIN_EXIT}" -eq 0 && "${COPY_EXIT}" -ne 0 ]]; then
+                exit "${COPY_EXIT}"
+              fi
+              exit "${TRAIN_EXIT}"
+          resources:
+            requests:
+              cpu: "32"
+              memory: "65Gi"
+              nvidia.com/a100: "1"
+              ephemeral-storage: "250Gi"
+            limits:
+              cpu: "32"
+              memory: "65Gi"
+              nvidia.com/a100: "1"
+              ephemeral-storage: "850Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: work
+              mountPath: /work
+            - name: artifacts-pvc
+              mountPath: /persist
+            - name: dev-shm
+              mountPath: /dev/shm
