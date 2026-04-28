@@ -710,8 +710,13 @@ def count_concept_targets(dataset: Dataset, cfg: Config) -> Tuple[np.ndarray, in
     start_time = time.perf_counter()
     for position, sample_index in enumerate(indices, start=1):
         path, _ = base_dataset.dataset.samples[sample_index]
+        annotation_index = (
+            int(base_dataset.sample_indices[sample_index])
+            if base_dataset.sample_indices is not None
+            else int(sample_index)
+        )
         image_size = get_image_size(path, base_dataset.input_size, base_dataset.min_image_bytes)
-        annotations = base_dataset._load_annotation(sample_index)
+        annotations = base_dataset._load_annotation(annotation_index)
         global_target, _, _ = build_gdino_target_sample(
             annotations,
             image_size,
