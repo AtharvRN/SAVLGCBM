@@ -1630,7 +1630,7 @@ def build_run_dir(cfg: Config) -> Path:
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     name = cfg.run_name or f"savlg_imagenet_standalone_{timestamp}"
     run_dir = Path(cfg.save_dir) / name
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 
 
