@@ -12,6 +12,7 @@ annotations/
 runs/
 wandb/
 output/
+k8s/
 docs/*.aux
 docs/*.log
 
