@@ -48,6 +48,11 @@ def parse_args() -> argparse.Namespace:
         default="train",
     )
     parser.add_argument("--train_root", default="")
+    parser.add_argument(
+        "--train_manifest",
+        default="",
+        help="Optional JSONL manifest with path/class_id/sample_index entries to avoid ImageFolder full-tree scans.",
+    )
     parser.add_argument("--annotation_dir", default="")
     parser.add_argument("--concept_file", default="concept_files/imagenet_filtered.txt")
     parser.add_argument("--val_root", default="")
@@ -83,6 +88,41 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mask_w", type=int, default=7)
     parser.add_argument("--patch_iou_thresh", type=float, default=0.5)
     parser.add_argument("--concept_threshold", type=float, default=0.15)
+    parser.add_argument(
+        "--spatial_target_mode",
+        choices=["hard_iou", "soft_box"],
+        default="soft_box",
+        help="How box supervision is rasterized into spatial targets.",
+    )
+    parser.add_argument(
+        "--spatial_loss_mode",
+        choices=["bce", "soft_align"],
+        default="soft_align",
+        help="Spatial alignment loss: hard/soft BCE or KL alignment to target spatial distribution.",
+    )
+    parser.add_argument(
+        "--filter_concepts_by_count",
+        action="store_true",
+        help="Filter concepts by train-set target frequency before building the concept head.",
+    )
+    parser.add_argument(
+        "--concept_min_count",
+        type=int,
+        default=1,
+        help="Minimum train-set positive count when --filter_concepts_by_count is enabled.",
+    )
+    parser.add_argument(
+        "--concept_min_frequency",
+        type=float,
+        default=0.0,
+        help="Minimum train-set positive fraction when --filter_concepts_by_count is enabled.",
+    )
+    parser.add_argument(
+        "--concept_max_frequency",
+        type=float,
+        default=1.0,
+        help="Maximum train-set positive fraction when --filter_concepts_by_count is enabled.",
+    )
     parser.add_argument("--optimizer", choices=["sgd", "adamw"], default="sgd")
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -103,6 +143,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log_every", type=int, default=20)
     parser.add_argument("--save_every", type=int, default=1)
     parser.add_argument("--skip_final_layer", action="store_true")
+    parser.add_argument(
+        "--final_layer_type",
+        choices=["sparse", "dense"],
+        default="sparse",
+        help="Final classifier to train after CBL feature extraction in train mode.",
+    )
     parser.add_argument("--saga_batch_size", type=int, default=512)
     parser.add_argument("--saga_workers", type=int, default=0)
     parser.add_argument("--saga_prefetch_factor", type=int, default=2)
@@ -122,6 +168,7 @@ def parse_args() -> argparse.Namespace:
 class Config:
     mode: str
     train_root: str
+    train_manifest: str
     annotation_dir: str
     concept_file: str
     val_root: str
@@ -152,6 +199,12 @@ class Config:
     mask_w: int
     patch_iou_thresh: float
     concept_threshold: float
+    spatial_target_mode: str
+    spatial_loss_mode: str
+    filter_concepts_by_count: bool
+    concept_min_count: int
+    concept_min_frequency: float
+    concept_max_frequency: float
     optimizer: str
     lr: float
     weight_decay: float
@@ -170,6 +223,7 @@ class Config:
     log_every: int
     save_every: int
     skip_final_layer: bool
+    final_layer_type: str
     saga_batch_size: int
     saga_workers: int
     saga_prefetch_factor: int
@@ -188,6 +242,7 @@ def build_config(args: argparse.Namespace) -> Config:
     return Config(
         mode=args.mode,
         train_root=args.train_root,
+        train_manifest=args.train_manifest,
         annotation_dir=args.annotation_dir,
         concept_file=args.concept_file,
         val_root=args.val_root,
@@ -218,6 +273,12 @@ def build_config(args: argparse.Namespace) -> Config:
         mask_w=args.mask_w,
         patch_iou_thresh=args.patch_iou_thresh,
         concept_threshold=args.concept_threshold,
+        spatial_target_mode=args.spatial_target_mode,
+        spatial_loss_mode=args.spatial_loss_mode,
+        filter_concepts_by_count=bool(args.filter_concepts_by_count),
+        concept_min_count=max(0, int(args.concept_min_count)),
+        concept_min_frequency=float(args.concept_min_frequency),
+        concept_max_frequency=float(args.concept_max_frequency),
         optimizer=args.optimizer,
         lr=args.lr,
         weight_decay=args.weight_decay,
@@ -236,6 +297,7 @@ def build_config(args: argparse.Namespace) -> Config:
         log_every=args.log_every,
         save_every=args.save_every,
         skip_final_layer=bool(args.skip_final_layer),
+        final_layer_type=args.final_layer_type,
         saga_batch_size=args.saga_batch_size,
         saga_workers=max(0, int(args.saga_workers)),
         saga_prefetch_factor=max(1, int(args.saga_prefetch_factor)),
@@ -276,6 +338,12 @@ def validate_config(cfg: Config) -> None:
         raise ValueError("--reuse_run_dir is required for glm_only/dense_only mode")
     if cfg.mode == "precompute_targets" and not cfg.precomputed_target_dir:
         raise ValueError("--precomputed_target_dir is required for precompute_targets mode")
+    if not 0.0 <= cfg.concept_min_frequency <= 1.0:
+        raise ValueError("--concept_min_frequency must be in [0, 1]")
+    if not 0.0 <= cfg.concept_max_frequency <= 1.0:
+        raise ValueError("--concept_max_frequency must be in [0, 1]")
+    if cfg.concept_min_frequency > cfg.concept_max_frequency:
+        raise ValueError("--concept_min_frequency cannot exceed --concept_max_frequency")
 
 
 def amp_dtype(name: str) -> Optional[torch.dtype]:
@@ -332,6 +400,24 @@ def load_concepts(path: str) -> List[str]:
     return list(dict.fromkeys(concepts))
 
 
+def load_run_concepts(cfg: Config) -> List[str]:
+    concepts = load_concepts(cfg.concept_file)
+    if cfg.mode == "precompute_targets" or not cfg.precomputed_target_dir:
+        return concepts
+    precomputed_concepts = Path(cfg.precomputed_target_dir) / "concepts.txt"
+    if not precomputed_concepts.exists():
+        return concepts
+    target_concepts = load_concepts(str(precomputed_concepts))
+    if target_concepts != concepts:
+        print(
+            f"[concept_filter] using {len(target_concepts)} concepts from {precomputed_concepts} "
+            f"instead of {len(concepts)} concepts from {cfg.concept_file}",
+            flush=True,
+        )
+        return target_concepts
+    return concepts
+
+
 class SafeImageFolderWithAnnotations(Dataset):
     def __init__(
         self,
@@ -341,6 +427,7 @@ class SafeImageFolderWithAnnotations(Dataset):
         input_size: int,
         min_image_bytes: int,
         split: str,
+        manifest: str = "",
     ) -> None:
         self.root = root
         self.annotation_dir = annotation_dir
@@ -349,8 +436,45 @@ class SafeImageFolderWithAnnotations(Dataset):
         self.split = split
         self.concepts = list(concepts)
         self.concept_to_idx = {name: idx for idx, name in enumerate(self.concepts)}
-        self.dataset = ImageFolder(root=root, loader=self._safe_loader, transform=self._transform(split))
+        self.sample_indices: Optional[List[int]] = None
+        if manifest:
+            self.dataset = self._load_manifest(manifest, split)
+        else:
+            self.dataset = ImageFolder(root=root, loader=self._safe_loader, transform=self._transform(split))
         self.precomputed_targets: Optional[PrecomputedTargetStore] = None
+
+    def _load_manifest(self, manifest: str, split: str) -> Any:
+        samples: List[Tuple[str, int]] = []
+        sample_indices: List[int] = []
+        class_names: Dict[int, str] = {}
+        with open(manifest, "r") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                payload = json.loads(line)
+                path = str(payload["path"])
+                class_id = int(payload["class_id"])
+                sample_index = int(payload.get("sample_index", len(samples)))
+                samples.append((path, class_id))
+                sample_indices.append(sample_index)
+                class_names[class_id] = str(payload.get("class_name", class_id))
+        if not samples:
+            raise ValueError(f"Manifest has no samples: {manifest}")
+        max_class_id = max(class_names)
+        classes = [str(idx) for idx in range(max_class_id + 1)]
+        for class_id, class_name in class_names.items():
+            classes[class_id] = class_name
+
+        class ManifestDataset:
+            pass
+
+        dataset = ManifestDataset()
+        dataset.samples = samples
+        dataset.classes = classes
+        dataset.transform = self._transform(split)
+        self.sample_indices = sample_indices
+        return dataset
 
     def attach_precomputed_targets(self, root: str) -> None:
         if not root:
@@ -364,6 +488,18 @@ class SafeImageFolderWithAnnotations(Dataset):
                 f"Precomputed targets at {target_dir} have {len(self.precomputed_targets)} entries, "
                 f"expected {len(self.dataset)}"
             )
+        if self.precomputed_targets.n_concepts != len(self.concepts):
+            raise ValueError(
+                f"Precomputed targets at {target_dir} have {self.precomputed_targets.n_concepts} concepts, "
+                f"expected {len(self.concepts)}"
+            )
+
+    def apply_concept_filter(self, keep_indices: Sequence[int]) -> None:
+        keep = [int(idx) for idx in keep_indices]
+        self.concepts = [self.concepts[idx] for idx in keep]
+        self.concept_to_idx = {name: idx for idx, name in enumerate(self.concepts)}
+        if self.precomputed_targets is not None:
+            self.precomputed_targets.set_concept_filter(keep)
 
     def _transform(self, split: str) -> transforms.Compose:
         normalize = transforms.Normalize(
@@ -415,23 +551,24 @@ class SafeImageFolderWithAnnotations(Dataset):
         return payload.get("concepts", [])
 
     def __len__(self) -> int:
-        return len(self.dataset)
+        return len(self.dataset.samples)
 
     def __getitem__(self, index: int):
         path, class_id = self.dataset.samples[index]
+        sample_index = int(self.sample_indices[index]) if self.sample_indices is not None else int(index)
         with self._safe_loader(path) as raw_image:
             image_size = (int(raw_image.size[0]), int(raw_image.size[1]))
             image = self.dataset.transform(raw_image) if self.dataset.transform is not None else raw_image
         item = {
             "image": image,
             "class_id": int(class_id),
-            "sample_index": int(index),
+            "sample_index": sample_index,
             "image_size": image_size,
         }
         if self.precomputed_targets is not None:
             item.update(self.precomputed_targets.get(index))
         else:
-            item["annotation"] = self._load_annotation(index)
+            item["annotation"] = self._load_annotation(sample_index)
         return item
 
 
@@ -441,6 +578,10 @@ class DatasetView(Dataset):
         self.indices = list(indices)
         self.concepts = base_dataset.concepts
         self.concept_to_idx = base_dataset.concept_to_idx
+
+    def refresh_concepts(self) -> None:
+        self.concepts = self.base_dataset.concepts
+        self.concept_to_idx = self.base_dataset.concept_to_idx
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -461,26 +602,47 @@ class PrecomputedTargetStore:
         self.offsets = np.load(root / "offsets.npy", mmap_mode="r")
         self.concept_ids = np.load(root / "concept_ids.npy", mmap_mode="r")
         self.mask_targets = np.load(root / "mask_targets.npy", mmap_mode="r")
+        self.keep_indices: Optional[np.ndarray] = None
+        self.concept_remap: Optional[np.ndarray] = None
 
     def __len__(self) -> int:
         return self.n_examples
 
+    def set_concept_filter(self, keep_indices: Sequence[int]) -> None:
+        keep = np.asarray(list(keep_indices), dtype=np.int64)
+        if keep.ndim != 1:
+            raise ValueError("Concept keep indices must be a 1D sequence")
+        if keep.size == 0:
+            raise ValueError("Concept count filtering removed all concepts")
+        if int(keep.min()) < 0 or int(keep.max()) >= self.n_concepts:
+            raise ValueError("Concept keep indices are out of bounds for precomputed targets")
+        remap = np.full((self.n_concepts,), -1, dtype=np.int64)
+        remap[keep] = np.arange(keep.size, dtype=np.int64)
+        self.keep_indices = keep
+        self.concept_remap = remap
+
     def get(self, index: int) -> Dict[str, torch.Tensor]:
         start = int(self.offsets[index])
         end = int(self.offsets[index + 1])
+        global_row = np.asarray(self.global_targets[index], dtype=np.float32)
+        if self.keep_indices is not None:
+            global_row = global_row[self.keep_indices]
         global_target = torch.from_numpy(
-            np.ascontiguousarray(np.asarray(self.global_targets[index], dtype=np.float32))
+            np.ascontiguousarray(global_row)
         )
         if end <= start:
             mask_indices = torch.zeros((0,), dtype=torch.long)
             mask_targets = torch.zeros((0, self.mask_h, self.mask_w), dtype=torch.float32)
         else:
-            mask_indices = torch.from_numpy(
-                np.ascontiguousarray(np.asarray(self.concept_ids[start:end], dtype=np.int64))
-            )
-            mask_targets = torch.from_numpy(
-                np.ascontiguousarray(np.asarray(self.mask_targets[start:end], dtype=np.float32))
-            )
+            concept_ids = np.asarray(self.concept_ids[start:end], dtype=np.int64)
+            masks = np.asarray(self.mask_targets[start:end], dtype=np.float32)
+            if self.concept_remap is not None:
+                mapped = self.concept_remap[concept_ids]
+                valid = mapped >= 0
+                concept_ids = mapped[valid]
+                masks = masks[valid]
+            mask_indices = torch.from_numpy(np.ascontiguousarray(concept_ids))
+            mask_targets = torch.from_numpy(np.ascontiguousarray(masks))
         return {
             "global_target": global_target,
             "mask_indices": mask_indices,
@@ -511,6 +673,113 @@ def split_train_val(
     if max_val_images > 0:
         val_indices = val_indices[:max_val_images]
     return DatasetView(dataset, train_indices), DatasetView(dataset, val_indices)
+
+
+def unwrap_dataset_view(dataset: Dataset) -> Tuple[SafeImageFolderWithAnnotations, List[int]]:
+    if isinstance(dataset, DatasetView):
+        return dataset.base_dataset, list(dataset.indices)
+    if isinstance(dataset, SafeImageFolderWithAnnotations):
+        return dataset, list(range(len(dataset)))
+    raise TypeError(f"Unsupported dataset type for concept filtering: {type(dataset).__name__}")
+
+
+def refresh_dataset_concepts(dataset: Dataset) -> None:
+    if isinstance(dataset, DatasetView):
+        dataset.refresh_concepts()
+
+
+def count_concept_targets(dataset: Dataset, cfg: Config) -> Tuple[np.ndarray, int]:
+    base_dataset, indices = unwrap_dataset_view(dataset)
+    n_examples = len(indices)
+    n_concepts = len(base_dataset.concepts)
+    counts = np.zeros((n_concepts,), dtype=np.int64)
+    if base_dataset.precomputed_targets is not None:
+        targets = base_dataset.precomputed_targets.global_targets
+        chunk_size = 4096
+        for start in range(0, n_examples, chunk_size):
+            chunk_indices = sorted(indices[start : start + chunk_size])
+            counts += np.asarray(targets[chunk_indices], dtype=np.int64).sum(axis=0)
+            if (start + len(chunk_indices)) % 50000 == 0:
+                print(
+                    f"[concept_filter] counted {start + len(chunk_indices)}/{n_examples} precomputed targets",
+                    flush=True,
+                )
+        return counts, n_examples
+
+    start_time = time.perf_counter()
+    for position, sample_index in enumerate(indices, start=1):
+        path, _ = base_dataset.dataset.samples[sample_index]
+        image_size = get_image_size(path, base_dataset.input_size, base_dataset.min_image_bytes)
+        annotations = base_dataset._load_annotation(sample_index)
+        global_target, _, _ = build_gdino_target_sample(
+            annotations,
+            image_size,
+            base_dataset.concept_to_idx,
+            n_concepts,
+            cfg,
+        )
+        counts += global_target.astype(np.int64, copy=False)
+        if position % 50000 == 0:
+            elapsed = time.perf_counter() - start_time
+            print(
+                f"[concept_filter] counted {position}/{n_examples} annotation targets "
+                f"ips={position / max(elapsed, 1e-6):.2f}",
+                flush=True,
+            )
+    return counts, n_examples
+
+
+def apply_count_concept_filter(
+    cfg: Config,
+    train_dataset: Dataset,
+    all_datasets: Sequence[Dataset],
+) -> Optional[Dict[str, Any]]:
+    if not cfg.filter_concepts_by_count:
+        return None
+    counts, n_examples = count_concept_targets(train_dataset, cfg)
+    frequencies = counts.astype(np.float64) / max(int(n_examples), 1)
+    keep_mask = (
+        (counts >= int(cfg.concept_min_count))
+        & (frequencies >= float(cfg.concept_min_frequency))
+        & (frequencies <= float(cfg.concept_max_frequency))
+    )
+    keep_indices = np.flatnonzero(keep_mask).astype(np.int64)
+    if keep_indices.size == 0:
+        raise RuntimeError("Concept count filtering removed all concepts")
+
+    seen: set[int] = set()
+    for dataset in all_datasets:
+        base_dataset, _ = unwrap_dataset_view(dataset)
+        ident = id(base_dataset)
+        if ident in seen:
+            continue
+        base_dataset.apply_concept_filter(keep_indices.tolist())
+        seen.add(ident)
+    for dataset in all_datasets:
+        refresh_dataset_concepts(dataset)
+
+    removed_indices = np.flatnonzero(~keep_mask).astype(np.int64)
+    summary = {
+        "enabled": True,
+        "n_examples": int(n_examples),
+        "original_n_concepts": int(counts.shape[0]),
+        "kept_n_concepts": int(keep_indices.size),
+        "removed_n_concepts": int(removed_indices.size),
+        "min_count": int(cfg.concept_min_count),
+        "min_frequency": float(cfg.concept_min_frequency),
+        "max_frequency": float(cfg.concept_max_frequency),
+        "keep_indices": keep_indices.tolist(),
+        "removed_indices": removed_indices.tolist(),
+        "kept_min_count": int(counts[keep_indices].min()),
+        "kept_max_count": int(counts[keep_indices].max()),
+    }
+    print(
+        "[concept_filter] kept "
+        f"{summary['kept_n_concepts']}/{summary['original_n_concepts']} concepts "
+        f"(removed {summary['removed_n_concepts']})",
+        flush=True,
+    )
+    return summary
 
 
 def collate_batch(batch: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
@@ -684,6 +953,60 @@ def rasterize_box_iou(
     return mask
 
 
+def rasterize_box_soft_occupancy(
+    box: Sequence[float],
+    image_size: Tuple[int, int],
+    mask_h: int,
+    mask_w: int,
+) -> Optional[np.ndarray]:
+    norm = normalize_box(box, image_size=image_size)
+    if norm is None:
+        return None
+    x1, y1, x2, y2 = norm
+    box_area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    if box_area <= 0.0:
+        return None
+    mask = np.zeros((mask_h, mask_w), dtype=np.float32)
+    patch_area = 1.0 / float(mask_h * mask_w)
+    for r in range(mask_h):
+        py1 = r / float(mask_h)
+        py2 = (r + 1) / float(mask_h)
+        for c in range(mask_w):
+            px1 = c / float(mask_w)
+            px2 = (c + 1) / float(mask_w)
+            ix1 = max(px1, x1)
+            iy1 = max(py1, y1)
+            ix2 = min(px2, x2)
+            iy2 = min(py2, y2)
+            inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            if inter > 0.0:
+                mask[r, c] = float(np.clip(inter / patch_area, 0.0, 1.0))
+    return mask
+
+
+def rasterize_box_target(
+    box: Sequence[float],
+    image_size: Tuple[int, int],
+    cfg: Config,
+) -> Optional[np.ndarray]:
+    if cfg.spatial_target_mode == "hard_iou":
+        return rasterize_box_iou(
+            box,
+            image_size=image_size,
+            mask_h=cfg.mask_h,
+            mask_w=cfg.mask_w,
+            iou_thresh=cfg.patch_iou_thresh,
+        )
+    if cfg.spatial_target_mode == "soft_box":
+        return rasterize_box_soft_occupancy(
+            box,
+            image_size=image_size,
+            mask_h=cfg.mask_h,
+            mask_w=cfg.mask_w,
+        )
+    raise ValueError(f"Unsupported spatial_target_mode: {cfg.spatial_target_mode}")
+
+
 def build_gdino_targets(
     annotations: Sequence[List[Dict[str, Any]]],
     image_sizes: Sequence[Tuple[int, int]],
@@ -713,12 +1036,10 @@ def build_gdino_targets(
                 scores[concept_idx] = score
             if score < cfg.concept_threshold:
                 continue
-            mask = rasterize_box_iou(
+            mask = rasterize_box_target(
                 ann.get("box"),
                 image_size=image_sizes[sample_idx],
-                mask_h=cfg.mask_h,
-                mask_w=cfg.mask_w,
-                iou_thresh=cfg.patch_iou_thresh,
+                cfg=cfg,
             )
             if mask is None:
                 continue
@@ -793,12 +1114,10 @@ def build_gdino_target_sample(
             scores[concept_idx] = score
         if score < cfg.concept_threshold:
             continue
-        mask = rasterize_box_iou(
+        mask = rasterize_box_target(
             ann.get("box"),
             image_size=image_size,
-            mask_h=cfg.mask_h,
-            mask_w=cfg.mask_w,
-            iou_thresh=cfg.patch_iou_thresh,
+            cfg=cfg,
         )
         if mask is None:
             continue
@@ -809,9 +1128,9 @@ def build_gdino_target_sample(
             np.maximum(existing, mask, out=existing)
     global_target = (scores > cfg.concept_threshold).astype(np.uint8)
     if not mask_dict:
-        return global_target, np.zeros((0,), dtype=np.int32), np.zeros((0, cfg.mask_h, cfg.mask_w), dtype=np.uint8)
+        return global_target, np.zeros((0,), dtype=np.int32), np.zeros((0, cfg.mask_h, cfg.mask_w), dtype=np.float32)
     keys = np.asarray(sorted(mask_dict.keys()), dtype=np.int32)
-    masks = np.stack([mask_dict[int(key)] for key in keys], axis=0).astype(np.uint8, copy=False)
+    masks = np.stack([mask_dict[int(key)] for key in keys], axis=0).astype(np.float32, copy=False)
     return global_target, keys, masks
 
 
@@ -851,8 +1170,13 @@ def precompute_target_store(
     start_time = time.perf_counter()
     for sample_index in range(total_examples):
         path, _ = dataset.dataset.samples[sample_index]
+        annotation_index = (
+            int(dataset.sample_indices[sample_index])
+            if dataset.sample_indices is not None
+            else sample_index
+        )
         image_size = get_image_size(path, dataset.input_size, dataset.min_image_bytes)
-        annotations = dataset._load_annotation(sample_index)
+        annotations = dataset._load_annotation(annotation_index)
         global_target, concept_ids, _ = build_gdino_target_sample(
             annotations,
             image_size,
@@ -885,15 +1209,20 @@ def precompute_target_store(
     mask_targets_memmap = np.lib.format.open_memmap(
         mask_targets_path,
         mode="w+",
-        dtype=np.uint8,
+        dtype=np.float32 if cfg.spatial_target_mode == "soft_box" else np.uint8,
         shape=(total_entries, cfg.mask_h, cfg.mask_w),
     )
     offset = 0
     second_start = time.perf_counter()
     for sample_index in range(total_examples):
         path, _ = dataset.dataset.samples[sample_index]
+        annotation_index = (
+            int(dataset.sample_indices[sample_index])
+            if dataset.sample_indices is not None
+            else sample_index
+        )
         image_size = get_image_size(path, dataset.input_size, dataset.min_image_bytes)
-        annotations = dataset._load_annotation(sample_index)
+        annotations = dataset._load_annotation(annotation_index)
         _, concept_ids, masks = build_gdino_target_sample(
             annotations,
             image_size,
@@ -1093,17 +1422,38 @@ def compute_losses(
         pred = spatial_maps[batch_index].index_select(0, concept_ids)
         tgt = mask_targets[batch_index][valid].to(pred.dtype)
 
-        bce_raw = F.binary_cross_entropy_with_logits(pred, tgt, reduction="none")
-        patch_pos_w = torch.where(
-            tgt > 0.5,
-            torch.full_like(tgt, float(cfg.patch_pos_weight)),
-            torch.ones_like(tgt),
-        )
-        patch_pos_w_flat = patch_pos_w.flatten(1)
-        per_concept_mask = (bce_raw.flatten(1) * patch_pos_w_flat).sum(dim=1) / torch.clamp(
-            patch_pos_w_flat.sum(dim=1),
-            min=1.0,
-        )
+        if cfg.spatial_loss_mode == "bce":
+            bce_raw = F.binary_cross_entropy_with_logits(pred, tgt, reduction="none")
+            patch_pos_w = torch.where(
+                tgt > 0.5,
+                torch.full_like(tgt, float(cfg.patch_pos_weight)),
+                torch.ones_like(tgt),
+            )
+            patch_pos_w_flat = patch_pos_w.flatten(1)
+            per_concept_mask = (bce_raw.flatten(1) * patch_pos_w_flat).sum(dim=1) / torch.clamp(
+                patch_pos_w_flat.sum(dim=1),
+                min=1.0,
+            )
+        elif cfg.spatial_loss_mode == "soft_align":
+            pred_flat = pred.flatten(1).float()
+            target_mass = mask_targets[batch_index][valid].flatten(1).float().clamp(min=0.0)
+            target_mass_sum = target_mass.sum(dim=1, keepdim=True)
+            valid_targets = target_mass_sum.squeeze(1) > 0.0
+            per_concept_mask = torch.zeros((pred_flat.shape[0],), device=pred.device, dtype=torch.float32)
+            if bool(valid_targets.any()):
+                target_dist = torch.zeros_like(target_mass)
+                target_dist[valid_targets] = target_mass[valid_targets] / torch.clamp(
+                    target_mass_sum[valid_targets],
+                    min=1e-6,
+                )
+                pred_log_dist = F.log_softmax(pred_flat[valid_targets], dim=1)
+                per_concept_mask[valid_targets] = F.kl_div(
+                    pred_log_dist,
+                    target_dist[valid_targets],
+                    reduction="none",
+                ).sum(dim=1)
+        else:
+            raise ValueError(f"Unsupported spatial_loss_mode: {cfg.spatial_loss_mode}")
         per_sample_mask_losses.append(per_concept_mask.mean())
 
         if cfg.loss_dice_w > 0.0:
@@ -1725,7 +2075,7 @@ def train_dense_final_layer(
 
 
 def profile_pipeline(cfg: Config) -> Dict[str, Any]:
-    concepts = load_concepts(cfg.concept_file)
+    concepts = load_run_concepts(cfg)
     dataset = SafeImageFolderWithAnnotations(
         root=cfg.train_root,
         annotation_dir=cfg.annotation_dir,
@@ -1733,12 +2083,16 @@ def profile_pipeline(cfg: Config) -> Dict[str, Any]:
         input_size=cfg.input_size,
         min_image_bytes=cfg.min_image_bytes,
         split="train",
+        manifest=cfg.train_manifest,
     )
     dataset.attach_precomputed_targets(cfg.precomputed_target_dir)
     indices = list(range(len(dataset)))
     if cfg.max_train_images > 0:
         indices = indices[: cfg.max_train_images]
-    loader = build_loader(DatasetView(dataset, indices), cfg, shuffle=False, drop_last=False)
+    dataset_view = DatasetView(dataset, indices)
+    concept_filter_summary = apply_count_concept_filter(cfg, dataset_view, [dataset_view])
+    concepts = list(dataset_view.concepts)
+    loader = build_loader(dataset_view, cfg, shuffle=False, drop_last=False)
     backbone, head = build_model(cfg, n_concepts=len(concepts))
     iterator = iter(loader)
     data_seconds = 0.0
@@ -1794,6 +2148,7 @@ def profile_pipeline(cfg: Config) -> Dict[str, Any]:
     return {
         "config": asdict(cfg),
         "n_concepts": len(concepts),
+        "concept_filter": concept_filter_summary,
         "profiled_steps": profiled_steps,
         "images_profiled": total_images,
         "timing_seconds": {
@@ -1813,8 +2168,6 @@ def profile_pipeline(cfg: Config) -> Dict[str, Any]:
 
 def run_precompute_targets(cfg: Config) -> Dict[str, Any]:
     concepts = load_concepts(cfg.concept_file)
-    output_root = Path(cfg.precomputed_target_dir).resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
     train_dataset = SafeImageFolderWithAnnotations(
         root=cfg.train_root,
         annotation_dir=cfg.annotation_dir,
@@ -1822,13 +2175,9 @@ def run_precompute_targets(cfg: Config) -> Dict[str, Any]:
         input_size=cfg.input_size,
         min_image_bytes=cfg.min_image_bytes,
         split="train",
+        manifest=cfg.train_manifest,
     )
-    train_summary = precompute_target_store(train_dataset, output_root, cfg)
-    result: Dict[str, Any] = {
-        "mode": "precompute_targets",
-        "output_root": str(output_root),
-        "train": train_summary,
-    }
+    val_dataset: Optional[SafeImageFolderWithAnnotations] = None
     if cfg.val_root:
         val_dataset = SafeImageFolderWithAnnotations(
             root=cfg.val_root,
@@ -1838,13 +2187,32 @@ def run_precompute_targets(cfg: Config) -> Dict[str, Any]:
             min_image_bytes=cfg.min_image_bytes,
             split="val",
         )
+    datasets: List[Dataset] = [train_dataset]
+    if val_dataset is not None:
+        datasets.append(val_dataset)
+    concept_filter_summary = apply_count_concept_filter(cfg, train_dataset, datasets)
+
+    output_root = Path(cfg.precomputed_target_dir).resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    train_summary = precompute_target_store(train_dataset, output_root, cfg)
+    result: Dict[str, Any] = {
+        "mode": "precompute_targets",
+        "output_root": str(output_root),
+        "concept_filter": concept_filter_summary,
+        "n_concepts": len(train_dataset.concepts),
+        "train": train_summary,
+    }
+    if val_dataset is not None:
         result["val"] = precompute_target_store(val_dataset, output_root, cfg)
     (output_root / "precompute_summary.json").write_text(json.dumps(result, indent=2))
+    (output_root / "concepts.txt").write_text("\n".join(train_dataset.concepts))
+    if concept_filter_summary is not None:
+        (output_root / "concept_filter_summary.json").write_text(json.dumps(concept_filter_summary, indent=2))
     return result
 
 
 def run_training(cfg: Config) -> Dict[str, Any]:
-    concepts = load_concepts(cfg.concept_file)
+    concepts = load_run_concepts(cfg)
     train_dataset_full = SafeImageFolderWithAnnotations(
         root=cfg.train_root,
         annotation_dir=cfg.annotation_dir,
@@ -1852,6 +2220,7 @@ def run_training(cfg: Config) -> Dict[str, Any]:
         input_size=cfg.input_size,
         min_image_bytes=cfg.min_image_bytes,
         split="train",
+        manifest=cfg.train_manifest,
     )
     train_dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir)
     if cfg.val_root:
@@ -1881,6 +2250,8 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             seed=cfg.seed,
         )
 
+    concept_filter_summary = apply_count_concept_filter(cfg, train_dataset, [train_dataset, val_dataset])
+    concepts = list(train_dataset.concepts)
     train_loader = build_loader(train_dataset, cfg, shuffle=True, drop_last=True)
     val_loader = build_loader(val_dataset, cfg, shuffle=False, drop_last=False)
     backbone, head = build_model(cfg, n_concepts=len(concepts))
@@ -1891,6 +2262,8 @@ def run_training(cfg: Config) -> Dict[str, Any]:
     run_dir = build_run_dir(cfg)
     (run_dir / "config.json").write_text(json.dumps(asdict(cfg), indent=2))
     (run_dir / "concepts.txt").write_text("\n".join(concepts))
+    if concept_filter_summary is not None:
+        (run_dir / "concept_filter_summary.json").write_text(json.dumps(concept_filter_summary, indent=2))
 
     best_val = float("inf")
     best_path = run_dir / "concept_head_best.pt"
@@ -1992,7 +2365,8 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             normalization_payload,
             run_dir / "final_layer_normalization.pt",
         )
-        final_layer_summary = train_sparse_final_layer(
+        final_layer_fn = train_dense_final_layer if cfg.final_layer_type == "dense" else train_sparse_final_layer
+        final_layer_summary = final_layer_fn(
             train_feature_path=train_feature_path,
             train_target_path=train_target_path,
             val_feature_path=val_feature_path,
@@ -2003,6 +2377,7 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             n_classes=len(train_dataset_full.dataset.classes),
             run_dir=run_dir,
         )
+        final_layer_summary["type"] = cfg.final_layer_type
         final_layer_summary["feature_extraction"] = {
             "train": train_extract_summary,
             "val": val_extract_summary,
@@ -2012,7 +2387,8 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             final_layer_summary["feature_extraction"]["persist_copy"] = persist_copy_summary
         (run_dir / "final_layer_summary.json").write_text(json.dumps(final_layer_summary, indent=2))
         print(
-            f"[final_layer] train_top1={final_layer_summary['train']['top1']:.4f} "
+            f"[final_layer:{cfg.final_layer_type}] "
+            f"train_top1={final_layer_summary['train']['top1']:.4f} "
             f"val_top1={final_layer_summary['val']['top1']:.4f} "
             f"sparsity={final_layer_summary['nnz']}/{final_layer_summary['total']}",
             flush=True,
@@ -2025,6 +2401,7 @@ def run_training(cfg: Config) -> Dict[str, Any]:
         "train_size": len(train_dataset),
         "val_size": len(val_dataset),
         "n_concepts": len(concepts),
+        "concept_filter": concept_filter_summary,
         "final_layer": final_layer_summary,
     }
     (run_dir / "summary.json").write_text(json.dumps(result, indent=2))
