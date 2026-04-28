@@ -7,7 +7,8 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      nodeName: gp-engine.hpc.okstate.edu
+      nodeSelector:
+        kubernetes.io/hostname: gp-engine.hpc.okstate.edu
 
       volumes:
         - name: data
