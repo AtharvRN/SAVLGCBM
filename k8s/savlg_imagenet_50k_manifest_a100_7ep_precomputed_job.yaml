@@ -7,6 +7,11 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      nodeName: hcc-gpengine-shor-c5303.unl.edu
+      tolerations:
+        - key: "nautilus.io/issue"
+          operator: "Equal"
+          value: "1663"
 
       volumes:
         - name: data
