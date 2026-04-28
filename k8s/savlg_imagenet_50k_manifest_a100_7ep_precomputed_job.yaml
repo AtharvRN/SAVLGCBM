@@ -7,7 +7,8 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      nodeName: hcc-gpengine-shor-c5303.unl.edu
+      nodeSelector:
+        kubernetes.io/hostname: hcc-gpengine-shor-c5303.unl.edu
       tolerations:
         - key: "nautilus.io/issue"
           operator: "Equal"
@@ -432,7 +433,7 @@ spec:
               nvidia.com/a100: "1"
               ephemeral-storage: "100Gi"
             limits:
-              cpu: "32"
+              cpu: "28"
               memory: "65Gi"
               nvidia.com/a100: "1"
               ephemeral-storage: "500Gi"
