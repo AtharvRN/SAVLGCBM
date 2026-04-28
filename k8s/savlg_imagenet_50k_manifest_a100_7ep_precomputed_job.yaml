@@ -201,7 +201,7 @@ spec:
 
               PERSIST_BASE="/persist/savlg_imagenet_standalone_runs"
               RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-              RUN_NAME="savlg_imagenet_50k_manifest_7ep_a100_precomputed_${RUN_STAMP}_${HOSTNAME:-pod}"
+              RUN_NAME="savlg_imagenet_50k_manifest_7ep_a100_dense_${RUN_STAMP}_${HOSTNAME:-pod}"
               RUN_DIR="${PERSIST_BASE}/${RUN_NAME}"
               FEATURE_WORK_DIR="/data/standalone_feature_cache/${RUN_NAME}"
               PRECOMPUTED_TARGET_DIR="/data/precomputed_targets/${RUN_NAME}"
@@ -215,6 +215,17 @@ spec:
               echo "[train] feature work dir: ${FEATURE_WORK_DIR}"
               echo "[train] precomputed target dir: ${PRECOMPUTED_TARGET_DIR}"
               echo "[train] manifest path: ${MANIFEST_PATH}"
+
+              copy_dir_low_priority() {
+                local src="$1"
+                local dst="$2"
+                mkdir -p "${dst}"
+                if command -v ionice >/dev/null 2>&1; then
+                  ionice -c3 nice -n 19 cp -a "${src}/." "${dst}/"
+                else
+                  nice -n 19 cp -a "${src}/." "${dst}/"
+                fi
+              }
 
               source /opt/conda/etc/profile.d/conda.sh
               export MKL_INTERFACE_LAYER=GNU
@@ -291,6 +302,16 @@ spec:
                 --device cpu \
                 --print_config
 
+              mkdir -p "${RUN_DIR}"
+              echo "[copy] starting background precomputed target copy to ${RUN_DIR}/precomputed_targets"
+              (
+                set -euo pipefail
+                copy_dir_low_priority "${PRECOMPUTED_TARGET_DIR}" "${RUN_DIR}/precomputed_targets"
+                touch "${RUN_DIR}/precomputed_targets_copy.done"
+                echo "[copy] precomputed target copy complete"
+              ) &
+              TARGET_COPY_PID=$!
+
               python -u scripts/train_savlg_imagenet_standalone.py \
                 --train_root "${IMAGENET_TRAIN_ROOT}" \
                 --train_manifest "${MANIFEST_PATH}" \
@@ -299,7 +320,6 @@ spec:
                 --save_dir "${PERSIST_BASE}" \
                 --run_name "${RUN_NAME}" \
                 --feature_dir "${FEATURE_WORK_DIR}" \
-                --persist_feature_copy \
                 --epochs 7 \
                 --batch_size 256 \
                 --workers 16 \
@@ -322,14 +342,32 @@ spec:
                 --channels_last \
                 --tf32 \
                 --feature_storage_dtype fp16 \
-                --final_layer_type sparse \
-                --saga_batch_size 512 \
-                --saga_lam 0.01 \
-                --saga_n_iters 10 \
-                --saga_table_device cpu \
+                --final_layer_type dense \
+                --dense_lr 1e-3 \
+                --dense_n_iters 3 \
                 --log_every 20 \
                 --print_config &
               TRAIN_PID=$!
+
+              echo "[copy] starting background feature-copy watcher"
+              (
+                set -euo pipefail
+                while kill -0 "${TRAIN_PID}" >/dev/null 2>&1; do
+                  if [[ -f "${RUN_DIR}/final_layer_normalization.pt" ]]; then
+                    copy_dir_low_priority "${FEATURE_WORK_DIR}" "${RUN_DIR}/features"
+                    touch "${RUN_DIR}/features_copy.done"
+                    echo "[copy] feature copy complete"
+                    exit 0
+                  fi
+                  sleep 30
+                done
+                if [[ -d "${FEATURE_WORK_DIR}" ]]; then
+                  copy_dir_low_priority "${FEATURE_WORK_DIR}" "${RUN_DIR}/features"
+                  touch "${RUN_DIR}/features_copy.done"
+                  echo "[copy] feature copy complete after train exit"
+                fi
+              ) &
+              FEATURE_COPY_PID=$!
 
               python -u scripts/log_system_telemetry.py \
                 --pid "${TRAIN_PID}" \
@@ -345,6 +383,28 @@ spec:
               set -e
 
               mkdir -p "${RUN_DIR}"
+              COPY_EXIT=0
+              set +e
+              wait "${TARGET_COPY_PID}"
+              TARGET_COPY_EXIT=$?
+              wait "${FEATURE_COPY_PID}"
+              FEATURE_COPY_EXIT=$?
+              set -e
+              if [[ "${TARGET_COPY_EXIT}" -ne 0 ]]; then
+                COPY_EXIT="${TARGET_COPY_EXIT}"
+                echo "[copy] precomputed target copy failed with exit ${TARGET_COPY_EXIT}" >&2
+              fi
+              if [[ "${FEATURE_COPY_EXIT}" -ne 0 ]]; then
+                COPY_EXIT="${FEATURE_COPY_EXIT}"
+                echo "[copy] feature copy failed with exit ${FEATURE_COPY_EXIT}" >&2
+              fi
+              cat > "${RUN_DIR}/copy_status.json" <<EOF
+              {
+                "precomputed_targets_copied": $(test -f "${RUN_DIR}/precomputed_targets_copy.done" && echo true || echo false),
+                "features_copied": $(test -f "${RUN_DIR}/features_copy.done" && echo true || echo false),
+                "copy_exit": ${COPY_EXIT}
+              }
+              EOF
               if [[ -f "${TELEMETRY_LOG}" ]]; then
                 mv "${TELEMETRY_LOG}" "${RUN_DIR}/system_telemetry.csv"
               fi
@@ -356,13 +416,16 @@ spec:
               cp -f "${MANIFEST_PATH}" "${RUN_DIR}/train_manifest.jsonl" || true
               printf '%s\n' "${RUN_DIR}" | tee "${PERSIST_BASE}/LATEST_RUN_50K_MANIFEST_7EP_A100.txt"
               echo "${TRAIN_EXIT}" > "${RUN_DIR}/exit_code.txt"
+              if [[ "${TRAIN_EXIT}" -eq 0 && "${COPY_EXIT}" -ne 0 ]]; then
+                exit "${COPY_EXIT}"
+              fi
               exit "${TRAIN_EXIT}"
           resources:
             requests:
-              cpu: "32"
+              cpu: "24"
               memory: "65Gi"
               nvidia.com/a100: "1"
-              ephemeral-storage: "500Gi"
+              ephemeral-storage: "100Gi"
             limits:
               cpu: "32"
               memory: "65Gi"
