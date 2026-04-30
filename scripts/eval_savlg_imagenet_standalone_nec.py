@@ -62,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log_every", type=int, default=1000)
     parser.add_argument("--nec_values", default="5,10,15,20,25,30")
     parser.add_argument("--save_truncated_weights", action="store_true")
+    parser.add_argument("--inference_alpha_override", type=float, default=None)
+    parser.add_argument("--max_samples", type=int, default=None)
     return parser.parse_args()
 
 
@@ -77,18 +79,27 @@ def parse_nec_values(raw: str) -> List[int]:
 
 
 def resolve_source_run_dir(artifact_dir: Path) -> Path:
+    def existing_dir(value: str) -> Path | None:
+        candidates = [Path(value).resolve()]
+        if value.startswith("/persist/"):
+            candidates.append(Path("/workspace") / Path(value).relative_to("/persist"))
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+        return None
+
     source_run_file = artifact_dir / "source_run_dir.txt"
     if source_run_file.exists():
-        source_run_dir = Path(source_run_file.read_text().strip()).resolve()
-        if source_run_dir.is_dir():
+        source_run_dir = existing_dir(source_run_file.read_text().strip())
+        if source_run_dir is not None:
             return source_run_dir
     metrics_file = artifact_dir / "glm_path_metrics.json"
     if metrics_file.exists():
         payload = json.loads(metrics_file.read_text())
         source_value = payload.get("source_run_dir", "")
         if source_value:
-            source_run_dir = Path(source_value).resolve()
-            if source_run_dir.is_dir():
+            source_run_dir = existing_dir(str(source_value))
+            if source_run_dir is not None:
                 return source_run_dir
     return artifact_dir
 
@@ -277,6 +288,7 @@ def evaluate_tar(
     feature_std: torch.Tensor,
     cfg: Config,
     log_every: int,
+    max_samples: int | None,
 ) -> Dict[str, Any]:
     device = cfg.device
     stacked_weights = torch.stack([item["weight"].to(device).float() for item in sweep], dim=0)
@@ -284,6 +296,7 @@ def evaluate_tar(
     top1 = torch.zeros(len(sweep), dtype=torch.long)
     top5 = torch.zeros(len(sweep), dtype=torch.long)
     total = 0
+    next_log = max(int(log_every), 1)
     start = time.perf_counter()
     if str(device).startswith("cuda") and torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -292,7 +305,7 @@ def evaluate_tar(
     batch_targets: List[int] = []
 
     def flush(last_name: str | None) -> None:
-        nonlocal total
+        nonlocal next_log, total
         if not images:
             return
         batch = torch.stack(images, dim=0)
@@ -310,9 +323,11 @@ def evaluate_tar(
                 concept_logits = (concept_logits - feature_mean) / feature_std
         _evaluate_logits(concept_logits, target_tensor, stacked_weights, stacked_biases, top1, top5)
         total += len(images)
-        if total % log_every == 0:
+        if total >= next_log:
             elapsed = time.perf_counter() - start
             print(f"[nec-eval] n={total} ips={total / max(elapsed, 1e-6):.2f} last={last_name}", flush=True)
+            while next_log <= total:
+                next_log += max(int(log_every), 1)
         images.clear()
         batch_targets.clear()
 
@@ -321,6 +336,8 @@ def evaluate_tar(
         batch_targets.append(int(target))
         if len(images) >= cfg.batch_size:
             flush(name)
+        if max_samples is not None and total + len(images) >= int(max_samples):
+            break
     flush(None)
 
     elapsed = time.perf_counter() - start
@@ -355,6 +372,7 @@ def evaluate_root(
     feature_std: torch.Tensor,
     cfg: Config,
     log_every: int,
+    max_samples: int | None,
 ) -> Dict[str, Any]:
     device = cfg.device
     stacked_weights = torch.stack([item["weight"].to(device).float() for item in sweep], dim=0)
@@ -384,6 +402,8 @@ def evaluate_root(
             if step % 50 == 0 or total % log_every == 0:
                 elapsed = time.perf_counter() - start
                 print(f"[nec-eval] step={step}/{len(loader)} n={total} ips={total / max(elapsed, 1e-6):.2f}", flush=True)
+            if max_samples is not None and total >= int(max_samples):
+                break
 
     elapsed = time.perf_counter() - start
     results = []
@@ -416,11 +436,15 @@ def main() -> None:
     nec_values = parse_nec_values(args.nec_values)
 
     cfg = load_run_config(source_run_dir, args)
+    if args.inference_alpha_override is not None:
+        cfg.residual_alpha = float(args.inference_alpha_override)
     configure_runtime(cfg)
 
     concepts = [line.strip() for line in (source_run_dir / "concepts.txt").read_text().splitlines() if line.strip()]
     backbone, head = build_model(cfg, n_concepts=len(concepts))
     head.load_state_dict(torch.load(source_run_dir / "concept_head_best.pt", map_location=cfg.device))
+    if args.inference_alpha_override is not None and hasattr(head, "residual_alpha"):
+        head.residual_alpha = float(args.inference_alpha_override)
 
     normalization_payload = torch.load(artifact_dir / "final_layer_normalization.pt", map_location="cpu")
     feature_mean = normalization_payload["mean"].to(cfg.device).float()
@@ -442,6 +466,8 @@ def main() -> None:
         "final_layer_path": str(final_layer_path) if final_layer_path is not None else "",
         "source_run_dir": str(source_run_dir),
         "nec_values": nec_values,
+        "inference_alpha_override": args.inference_alpha_override,
+        "max_samples": args.max_samples,
     }
 
     if args.val_tar:
@@ -463,6 +489,7 @@ def main() -> None:
             feature_std,
             cfg,
             args.log_every,
+            args.max_samples,
         )
     elif args.val_root:
         val_root = Path(args.val_root).resolve()
@@ -476,6 +503,7 @@ def main() -> None:
             feature_std,
             cfg,
             args.log_every,
+            args.max_samples,
         )
     else:
         raise ValueError("Provide either --val_tar/--devkit_dir or --val_root")

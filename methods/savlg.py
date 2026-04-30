@@ -2735,6 +2735,9 @@ def train_savlg_cbm(args):
     }
     if int(args.num_workers) > 0:
         supervision_loader_kwargs["persistent_workers"] = True
+        supervision_loader_kwargs["prefetch_factor"] = max(
+            1, int(getattr(args, "prefetch_factor", 4))
+        )
     train_supervision_loader = DataLoader(
         train_supervision_ds,
         shuffle=True,
@@ -2768,6 +2771,9 @@ def train_savlg_cbm(args):
         }
         if int(args.num_workers) > 0:
             cached_loader_kwargs["persistent_workers"] = True
+            cached_loader_kwargs["prefetch_factor"] = max(
+                1, int(getattr(args, "prefetch_factor", 4))
+            )
         train_loader = DataLoader(
             CachedFeatureLabelDataset(train_cached["feats"], train_cached["labels"]),
             **cached_loader_kwargs,
@@ -2777,12 +2783,19 @@ def train_savlg_cbm(args):
             **cached_loader_kwargs,
         )
     else:
-        train_loader = DataLoader(
-            train_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
-        )
-        val_loader = DataLoader(
-            val_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
-        )
+        eval_loader_kwargs = {
+            "batch_size": args.cbl_batch_size,
+            "shuffle": False,
+            "num_workers": args.num_workers,
+            "pin_memory": True,
+        }
+        if int(args.num_workers) > 0:
+            eval_loader_kwargs["persistent_workers"] = True
+            eval_loader_kwargs["prefetch_factor"] = max(
+                1, int(getattr(args, "prefetch_factor", 4))
+            )
+        train_loader = DataLoader(train_dataset, **eval_loader_kwargs)
+        val_loader = DataLoader(val_dataset, **eval_loader_kwargs)
     train_feature_path, train_label_path, train_mean, train_std = extract_global_concepts_to_memmap(
         args,
         backbone,

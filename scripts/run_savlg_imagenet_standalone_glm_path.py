@@ -72,10 +72,19 @@ def parse_nec_values(raw: str) -> List[int]:
 
 
 def resolve_source_run_dir(artifact_dir: Path) -> Path:
+    def existing_dir(value: str) -> Path | None:
+        candidates = [Path(value).resolve()]
+        if value.startswith("/persist/"):
+            candidates.append(Path("/workspace") / Path(value).relative_to("/persist"))
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+        return None
+
     source_run_file = artifact_dir / "source_run_dir.txt"
     if source_run_file.exists():
-        source_run_dir = Path(source_run_file.read_text().strip()).resolve()
-        if source_run_dir.is_dir():
+        source_run_dir = existing_dir(source_run_file.read_text().strip())
+        if source_run_dir is not None:
             return source_run_dir
     return artifact_dir
 
@@ -269,7 +278,10 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cfg = load_config(source_run_dir, args.device)
-    normalization_payload = torch.load(source_run_dir / "final_layer_normalization.pt", map_location="cpu")
+    normalization_path = artifact_dir / "final_layer_normalization.pt"
+    if not normalization_path.exists():
+        normalization_path = source_run_dir / "final_layer_normalization.pt"
+    normalization_payload = torch.load(normalization_path, map_location="cpu")
     feature_mean = normalization_payload["mean"].float().cpu().numpy()
     feature_std = normalization_payload["std"].float().cpu().numpy()
 
