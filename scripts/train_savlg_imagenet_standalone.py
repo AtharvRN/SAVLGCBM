@@ -160,6 +160,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dense_n_iters", type=int, default=20)
     parser.add_argument("--feature_storage_dtype", choices=["fp16", "fp32"], default="fp16")
     parser.add_argument("--saga_table_device", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--vlg_init_path", default="")
+    parser.add_argument("--vlg_concepts_path", default="")
+    parser.add_argument("--freeze_global_head", action="store_true")
+    parser.add_argument("--scheduler", choices=["none", "cosine"], default="none")
     parser.add_argument("--print_config", action="store_true")
     return parser.parse_args()
 
@@ -235,6 +239,10 @@ class Config:
     dense_n_iters: int
     feature_storage_dtype: str
     saga_table_device: str
+    vlg_init_path: str
+    vlg_concepts_path: str
+    freeze_global_head: bool
+    scheduler: str
     print_config: bool
 
 
@@ -309,6 +317,10 @@ def build_config(args: argparse.Namespace) -> Config:
         dense_n_iters=max(1, int(args.dense_n_iters)),
         feature_storage_dtype=args.feature_storage_dtype,
         saga_table_device=args.saga_table_device,
+        vlg_init_path=str(args.vlg_init_path or ""),
+        vlg_concepts_path=str(args.vlg_concepts_path or ""),
+        freeze_global_head=bool(args.freeze_global_head),
+        scheduler=str(args.scheduler or "none"),
         print_config=bool(args.print_config),
     )
 
@@ -344,6 +356,10 @@ def validate_config(cfg: Config) -> None:
         raise ValueError("--concept_max_frequency must be in [0, 1]")
     if cfg.concept_min_frequency > cfg.concept_max_frequency:
         raise ValueError("--concept_min_frequency cannot exceed --concept_max_frequency")
+    if cfg.freeze_global_head and not cfg.vlg_init_path:
+        raise ValueError("--freeze_global_head requires --vlg_init_path")
+    if cfg.vlg_init_path and not cfg.vlg_concepts_path:
+        raise ValueError("--vlg_concepts_path is required when --vlg_init_path is set")
 
 
 def amp_dtype(name: str) -> Optional[torch.dtype]:
@@ -660,20 +676,80 @@ def split_train_val(
 ) -> Tuple[DatasetView, DatasetView]:
     total = len(dataset)
     indices = list(range(total))
+    generator = random.Random(seed)
+    indices = select_subset_indices(
+        dataset,
+        indices,
+        max_images=max_train_images,
+        seed=seed,
+        stratify=True,
+    )
     n_val = int(round(float(val_split) * len(indices)))
     n_val = min(max(n_val, 1), max(len(indices) - 1, 1))
-    generator = random.Random(seed)
     generator.shuffle(indices)
-    if max_train_images > 0:
-        total = min(total, max_train_images)
-        indices = indices[:total]
-        n_val = int(round(float(val_split) * len(indices)))
-        n_val = min(max(n_val, 1), max(len(indices) - 1, 1))
     val_indices = indices[:n_val]
     train_indices = indices[n_val:]
     if max_val_images > 0:
-        val_indices = val_indices[:max_val_images]
+        val_indices = select_subset_indices(
+            dataset,
+            val_indices,
+            max_images=max_val_images,
+            seed=seed + 1,
+            stratify=True,
+        )
     return DatasetView(dataset, train_indices), DatasetView(dataset, val_indices)
+
+
+def select_subset_indices(
+    dataset: SafeImageFolderWithAnnotations,
+    indices: Sequence[int],
+    *,
+    max_images: int,
+    seed: int,
+    stratify: bool,
+) -> List[int]:
+    selected = list(indices)
+    if max_images <= 0 or len(selected) <= max_images:
+        return selected
+
+    generator = random.Random(seed)
+    if not stratify:
+        generator.shuffle(selected)
+        return selected[:max_images]
+
+    shuffled = list(selected)
+    generator.shuffle(shuffled)
+    class_to_indices: Dict[int, List[int]] = {}
+    for sample_index in shuffled:
+        _, class_id = dataset.dataset.samples[sample_index]
+        class_to_indices.setdefault(int(class_id), []).append(int(sample_index))
+
+    class_ids = list(class_to_indices)
+    generator.shuffle(class_ids)
+    per_class = max_images // len(class_ids)
+    remainder = max_images % len(class_ids)
+
+    chosen: List[int] = []
+    chosen_set: set[int] = set()
+    for class_position, class_id in enumerate(class_ids):
+        want = per_class + (1 if class_position < remainder else 0)
+        if want <= 0:
+            continue
+        class_choices = class_to_indices[class_id][:want]
+        chosen.extend(class_choices)
+        chosen_set.update(class_choices)
+
+    if len(chosen) < max_images:
+        for sample_index in shuffled:
+            if sample_index in chosen_set:
+                continue
+            chosen.append(sample_index)
+            chosen_set.add(sample_index)
+            if len(chosen) >= max_images:
+                break
+
+    generator.shuffle(chosen)
+    return chosen[:max_images]
 
 
 def unwrap_dataset_view(dataset: Dataset) -> Tuple[SafeImageFolderWithAnnotations, List[int]]:
@@ -1388,6 +1464,53 @@ def build_model(cfg: Config, n_concepts: int) -> Tuple[nn.Module, nn.Module]:
     return backbone, head
 
 
+def init_global_head_from_vlg(head: nn.Module, cfg: Config, concepts: Sequence[str]) -> None:
+    if not cfg.vlg_init_path:
+        return
+    if not hasattr(head, "global_head"):
+        print(
+            f"[vlg_init] skipping: head type {type(head).__name__} has no global_head",
+            flush=True,
+        )
+        return
+
+    vlg_state = torch.load(cfg.vlg_init_path, map_location="cpu")
+    if isinstance(vlg_state, dict) and "state_dict" in vlg_state and isinstance(vlg_state["state_dict"], dict):
+        vlg_state = vlg_state["state_dict"]
+    weight = vlg_state.get("model.0.weight")
+    bias = vlg_state.get("model.0.bias")
+    if weight is None or bias is None:
+        raise KeyError(f"Could not find VLG weights in {cfg.vlg_init_path}")
+
+    vlg_concepts = load_concepts(cfg.vlg_concepts_path)
+    if len(vlg_concepts) != int(weight.shape[0]):
+        raise ValueError(
+            f"VLG concept count mismatch: {len(vlg_concepts)} concepts for weight rows {int(weight.shape[0])}"
+        )
+    vlg_concept_to_idx = {concept: idx for idx, concept in enumerate(vlg_concepts)}
+    target_head = head.global_head
+    if tuple(weight.shape) != tuple(target_head.weight.shape):
+        if int(weight.shape[1]) != int(target_head.weight.shape[1]):
+            raise ValueError(
+                f"VLG init feature dim mismatch: {tuple(weight.shape)} vs {tuple(target_head.weight.shape)}"
+            )
+    matched = 0
+    with torch.no_grad():
+        for our_idx, concept in enumerate(concepts):
+            vlg_idx = vlg_concept_to_idx.get(concept)
+            if vlg_idx is None:
+                continue
+            target_head.weight[our_idx].copy_(weight[vlg_idx])
+            target_head.bias[our_idx].copy_(bias[vlg_idx])
+            matched += 1
+    print(f"[vlg_init] matched {matched}/{len(concepts)} concepts from {cfg.vlg_init_path}", flush=True)
+
+    if cfg.freeze_global_head:
+        for parameter in target_head.parameters():
+            parameter.requires_grad = False
+        print("[vlg_init] global head frozen", flush=True)
+
+
 def prepare_images(images: torch.Tensor, cfg: Config) -> torch.Tensor:
     if cfg.channels_last:
         images = images.contiguous(memory_format=torch.channels_last)
@@ -1487,6 +1610,7 @@ def compute_losses(
 
 def make_optimizer(head: nn.Module, cfg: Config) -> torch.optim.Optimizer:
     parameters = [parameter for parameter in head.parameters() if parameter.requires_grad]
+    print(f"[training] trainable parameters={sum(p.numel() for p in parameters)}", flush=True)
     if cfg.optimizer == "adamw":
         return torch.optim.AdamW(parameters, lr=cfg.lr, weight_decay=cfg.weight_decay)
     return torch.optim.SGD(
@@ -1495,6 +1619,21 @@ def make_optimizer(head: nn.Module, cfg: Config) -> torch.optim.Optimizer:
         weight_decay=cfg.weight_decay,
         momentum=cfg.momentum,
     )
+
+
+def make_scheduler(
+    optimizer: torch.optim.Optimizer,
+    cfg: Config,
+) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
+    if cfg.scheduler == "none":
+        return None
+    if cfg.scheduler == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(int(cfg.epochs), 1),
+            eta_min=1e-6,
+        )
+    raise ValueError(f"Unsupported scheduler: {cfg.scheduler}")
 
 
 def train_one_epoch(
@@ -2092,14 +2231,19 @@ def profile_pipeline(cfg: Config) -> Dict[str, Any]:
         manifest=cfg.train_manifest,
     )
     dataset.attach_precomputed_targets(cfg.precomputed_target_dir)
-    indices = list(range(len(dataset)))
-    if cfg.max_train_images > 0:
-        indices = indices[: cfg.max_train_images]
+    indices = select_subset_indices(
+        dataset,
+        list(range(len(dataset))),
+        max_images=cfg.max_train_images,
+        seed=cfg.seed,
+        stratify=True,
+    )
     dataset_view = DatasetView(dataset, indices)
     concept_filter_summary = apply_count_concept_filter(cfg, dataset_view, [dataset_view])
     concepts = list(dataset_view.concepts)
     loader = build_loader(dataset_view, cfg, shuffle=False, drop_last=False)
     backbone, head = build_model(cfg, n_concepts=len(concepts))
+    init_global_head_from_vlg(head, cfg, concepts)
     iterator = iter(loader)
     data_seconds = 0.0
     h2d_seconds = 0.0
@@ -2239,12 +2383,20 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             split="val",
         )
         val_dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir)
-        train_indices = list(range(len(train_dataset_full)))
-        if cfg.max_train_images > 0:
-            train_indices = train_indices[: cfg.max_train_images]
-        val_indices = list(range(len(val_dataset_full)))
-        if cfg.max_val_images > 0:
-            val_indices = val_indices[: cfg.max_val_images]
+        train_indices = select_subset_indices(
+            train_dataset_full,
+            list(range(len(train_dataset_full))),
+            max_images=cfg.max_train_images,
+            seed=cfg.seed,
+            stratify=True,
+        )
+        val_indices = select_subset_indices(
+            val_dataset_full,
+            list(range(len(val_dataset_full))),
+            max_images=cfg.max_val_images,
+            seed=cfg.seed + 1,
+            stratify=True,
+        )
         train_dataset = DatasetView(train_dataset_full, train_indices)
         val_dataset = DatasetView(val_dataset_full, val_indices)
     else:
@@ -2261,7 +2413,9 @@ def run_training(cfg: Config) -> Dict[str, Any]:
     train_loader = build_loader(train_dataset, cfg, shuffle=True, drop_last=True)
     val_loader = build_loader(val_dataset, cfg, shuffle=False, drop_last=False)
     backbone, head = build_model(cfg, n_concepts=len(concepts))
+    init_global_head_from_vlg(head, cfg, concepts)
     optimizer = make_optimizer(head, cfg)
+    scheduler = make_scheduler(optimizer, cfg)
     scaler = None
     if cfg.amp == "fp16" and str(cfg.device).startswith("cuda"):
         scaler = torch.cuda.amp.GradScaler()
@@ -2296,11 +2450,18 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             split_name="val",
         )
         summary = {"epoch": epoch, "train": train_metrics, "val": val_metrics}
+        if scheduler is not None:
+            summary["lr"] = float(scheduler.get_last_lr()[0])
         history.append(summary)
-        print(
+        epoch_message = (
             f"[epoch] {epoch} "
             f"train_loss={train_metrics['loss']:.4f} train_ips={train_metrics['images_per_second']:.2f} "
-            f"val_loss={val_metrics['loss']:.4f} val_ips={val_metrics['images_per_second']:.2f}",
+            f"val_loss={val_metrics['loss']:.4f} val_ips={val_metrics['images_per_second']:.2f}"
+        )
+        if scheduler is not None:
+            epoch_message += f" lr={scheduler.get_last_lr()[0]:.6f}"
+        print(
+            epoch_message,
             flush=True,
         )
         if val_metrics["loss"] < best_val:
@@ -2308,6 +2469,8 @@ def run_training(cfg: Config) -> Dict[str, Any]:
             torch.save(head.state_dict(), best_path)
         if epoch % cfg.save_every == 0:
             save_checkpoint(run_dir, head, optimizer, epoch, cfg, train_metrics, val_metrics)
+        if scheduler is not None:
+            scheduler.step()
 
     final_layer_summary: Optional[Dict[str, Any]] = None
     if not cfg.skip_final_layer:
