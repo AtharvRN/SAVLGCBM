@@ -268,7 +268,8 @@ def train_spg(linear, loader, max_lr, nepochs, lam, alpha, preprocess=None, min_
 # initial pass over the loaders
 def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None,
                 state=None, table_device=None, n_ex=None, n_classes=None, tol=1e-4,
-                preprocess=None, lookbehind=None, family='multinomial', logger=None):
+                preprocess=None, lookbehind=None, family='multinomial', logger=None,
+                eval_every=None, eval_loader=None):
     if logger is None: 
         logger = print
     with ch.no_grad(): 
@@ -357,13 +358,23 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                 if w is not None: 
                     a = a*w.unsqueeze(1)
                 if idx.device != a_table.device:
-                    table_idx = idx.to(a_table.device, non_blocking=True)
+                    # GPU->CPU index copies must be synchronized here; an async
+                    # transfer can yield garbage indices when the SAGA table is
+                    # kept on CPU and cached features/indices live on CUDA.
+                    table_idx = idx.to(
+                        a_table.device,
+                        dtype=ch.long,
+                        non_blocking=(a_table.device.type == "cuda"),
+                    )
                 else:
                     table_idx = idx
                 if a_table.device == weight_device:
                     a_prev = a_table[table_idx]
                 else:
-                    a_prev = a_table[table_idx].to(weight_device, non_blocking=True)
+                    a_prev = a_table[table_idx].to(
+                        weight_device,
+                        non_blocking=(a_table.device.type == "cuda"),
+                    )
 
                 # weight parameter
                 # Compute the same class-by-feature gradient without materializing
@@ -397,7 +408,10 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                 if a_table.device == weight_device:
                     a_table[table_idx] = a
                 else:
-                    a_table[table_idx] = a.to(table_device, non_blocking=True)
+                    a_table[table_idx] = a.to(
+                        table_device,
+                        non_blocking=False,
+                    )
                 w_grad_avg.add_((w_grad - w_grad_prev)*X.size(0)/n_ex)
                 b_grad_avg.add_((b_grad - b_grad_prev)*X.size(0)/n_ex)
 
@@ -436,6 +450,16 @@ def train_saga(linear, loader, lr, nepochs, lam, alpha, group=True, verbose=None
                     logger(f"obj {saga_obj.item()} weight nnz {nnz}/{total} ({nnz/total:.4f}) criteria {criteria:.4f} {dw} {db}")
                 else: 
                     logger(f"obj {saga_obj.item()} weight nnz {nnz}/{total} ({nnz/total:.4f}) obj_best {obj_best}")
+
+            if eval_every is not None and eval_every > 0 and eval_loader is not None and ((t + 1) % eval_every) == 0:
+                loss_eval, acc_eval = elastic_loss_and_acc_loader(
+                    linear, eval_loader, lam, alpha, preprocess=preprocess, family=family
+                )
+                logger(
+                    f"[periodic_eval iter {t + 1}] "
+                    f"val loss {loss_eval.item():.4f} val acc {acc_eval.item():.4f} "
+                    f"nnz {nnz}/{total} ({nnz/total:.4f})"
+                )
 
             if lookbehind is not None and criteria: 
                 logger(f"obj {saga_obj.item()} weight nnz {nnz}/{total} ({nnz/total:.4f}) obj_best {obj_best} [early stop at {t}]")
@@ -560,6 +584,7 @@ def glm_saga(linear, loader, max_lr, nepochs, alpha,
              do_zero=True, lr_decay_factor=1, metadata=None,
              val_loader=None, test_loader=None, lookbehind=None,
              family='multinomial', encoder=None, max_sparsity=None,
+             eval_every=None,
              eval_train=True, eval_val=True, eval_test=True):
     if encoder is not None: 
         warnings.warn("encoder argument is deprecated; please use preprocess instead", DeprecationWarning)
@@ -614,7 +639,7 @@ def glm_saga(linear, loader, max_lr, nepochs, alpha,
         state = train_saga(linear, loader, lr, nepochs, lam, alpha, 
                     table_device=table_device, preprocess=preprocess, group=group, verbose=verbose, 
                     state=state, n_ex=n_ex, n_classes=n_classes, tol=tol, lookbehind=lookbehind, 
-                    family=family, logger=logger)
+                    family=family, logger=logger, eval_every=eval_every, eval_loader=val_loader if eval_val else None)
         
         with ch.no_grad():
             loss, acc = float("nan"), float("nan")

@@ -36,6 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tol", type=float, default=1e-4, help="Solver convergence tolerance for GLM-SAGA.")
     parser.add_argument("--table_device", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--verbose_every", type=int, default=1)
+    parser.add_argument(
+        "--eval_every",
+        type=int,
+        default=0,
+        help="If > 0, run a full validation pass every N outer SAGA iterations and log val loss/acc.",
+    )
     parser.add_argument("--nec_values", default="5,10,15,20,25,30")
     parser.add_argument("--skip_train_eval", action="store_true", help="Skip the full train-set metric pass after each lambda.")
     parser.add_argument("--skip_val_eval", action="store_true", help="Skip the full val-set metric pass after each lambda.")
@@ -383,6 +389,7 @@ def main() -> None:
         n_ex=len(train_loader.dataset),
         n_classes=n_classes,
         verbose=args.verbose_every,
+        eval_every=(args.eval_every if args.eval_every > 0 else None),
         max_sparsity=args.max_sparsity,
         eval_train=not args.skip_train_eval,
         eval_val=not args.skip_val_eval,
@@ -422,6 +429,7 @@ def main() -> None:
             "tol": args.tol,
             "table_device": args.table_device,
             "verbose_every": args.verbose_every,
+            "eval_every": args.eval_every,
             "pin_memory": bool(args.pin_memory),
             "skip_train_eval": bool(args.skip_train_eval),
             "skip_val_eval": bool(args.skip_val_eval),

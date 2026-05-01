@@ -218,6 +218,87 @@ So the clean next sparse search should likely be:
 
 - stay on the completed `alpha=0.2` dense artifact
 - sweep around `lam_max` near `5e-4`
+
+## Full ImageNet `mask_w=1.0` follow-up
+
+Completed dense training run:
+
+- `/workspace/savlg_imagenet_standalone_runs/savlg_imagenet_full_7ep_a100_dense_maskw1_20260430T092613Z_savlg-imagenet-full-a100-7ep-dense-maskw1-jsqmp`
+
+Dense 50k val-tar eval from `final_layer_dense.pt`:
+
+| Model | Top-1 | Top-5 | Notes |
+|---|---:|---:|---|
+| dense head | `0.75534` | `0.91732` | full 50k ImageNet val tar |
+
+### `mask_w=1.0` sparse run now evaluated on 50k val
+
+Sparse checkpoint:
+
+- `/workspace/savlg_imagenet_standalone_runs/savlg_imagenet_full_7ep_a100_dense_maskw1_20260430T092613Z_savlg-imagenet-full-a100-7ep-dense-maskw1-jsqmp/glm_one_lambda_lam3e4_1000it_tol1e6_cpu_table_eval100`
+
+Raw sparse model result:
+
+| Lambda | Iterations | Tolerance | Val acc | NNZ | Weight sparsity | 50k val top-1 | 50k val top-5 | NEC eval mode |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `0.0003` | `1000` | `1e-6` | `0.7620` | `71,594` | `0.9834` | `0.76926` | `0.9312` | `as_is_sparse_model` |
+
+Observed behavior during optimization:
+
+| Iteration | Val acc | NNZ |
+|---:|---:|---:|
+| 100 | `0.7739` | `248,605` |
+| 200 | `0.7708` | `157,056` |
+| 300 | `0.7687` | `122,552` |
+| 400 | `0.7670` | `104,549` |
+| 1000 | `0.7620` | `71,594` |
+
+Interpretation:
+
+- `loss_mask_w=1.0` does not obviously fix the sparse frontier by itself.
+- The run still stays far denser than NEC=5:
+  - NEC=5 target is about `5,000` nonzeros
+  - this raw sparse model still has `71,594`
+- Even so, the raw sparse model preserves dense-level accuracy quite well on the full 50k val set:
+  - dense head top-1 `0.75534`
+  - raw sparse top-1 `0.76926`
+- So this checkpoint remains useful for exact-truncation follow-up, but it is not naturally sparse enough at low NEC without an explicit truncation step.
+
+### `mask_w=1.0` exact-truncation NEC eval on 50k val
+
+To keep the saved truncated weights separate from the raw GLM run, the exact-truncation eval was staged under:
+
+- `/workspace/savlg_imagenet_standalone_runs/savlg_imagenet_full_7ep_a100_dense_maskw1_20260430T092613Z_savlg-imagenet-full-a100-7ep-dense-maskw1-jsqmp/glm_one_lambda_lam3e4_1000it_tol1e6_cpu_table_eval100_exact_trunc`
+
+This directory now contains:
+
+- `final_layer_glm_saga.pt`
+- `final_layer_normalization.pt`
+- `W_g@NEC=5.pt`, `W_g@NEC=10.pt`, ..., `W_g@NEC=30.pt`
+- `b_g@NEC=5.pt`, `b_g@NEC=10.pt`, ..., `b_g@NEC=30.pt`
+- `nec_eval_val_tar.json`
+
+Exact-truncation 50k val results:
+
+| NEC | NNZ | Top-1 | Top-5 |
+|---:|---:|---:|---:|
+| 5 | 5,000 | `0.44848` | `0.69330` |
+| 10 | 10,000 | `0.61948` | `0.83742` |
+| 15 | 15,000 | `0.68408` | `0.88384` |
+| 20 | 20,000 | `0.71458` | `0.90250` |
+| 25 | 25,000 | `0.73392` | `0.91308` |
+| 30 | 30,000 | `0.74518` | `0.91966` |
+
+Key comparison for `mask_w=1.0`:
+
+- raw sparse model at `71,594` nnz:
+  - top-1 `0.76926`
+  - top-5 `0.9312`
+- exact NEC=5:
+  - top-1 `0.44848`
+  - top-5 `0.69330`
+
+So `loss_mask_w=1.0` still does not close the low-NEC gap. It gives a viable dense-ish sparse model, but once the same weights are forced down to exact NEC targets, performance still drops sharply.
 - use tighter tolerance and explicit `exact_truncation` NEC eval
 - avoid one-off runs whose directory names do not match the actual config
 
