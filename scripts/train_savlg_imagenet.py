@@ -359,7 +359,7 @@ def train_one_epoch(
         global_targets, idx_pad, mask_pad, valid_pad = require_precomputed_targets(batch, cfg)
 
         optimizer.zero_grad(set_to_none=True)
-        with torch.no_grad():
+        with torch.inference_mode(), autocast_context(cfg):
             feats = backbone(images)
         with autocast_context(cfg):
             outputs = head(feats)
@@ -421,8 +421,9 @@ def evaluate_one_epoch(
     for batch in loader:
         images = prepare_images(batch["images"], cfg)
         global_targets, idx_pad, mask_pad, valid_pad = require_precomputed_targets(batch, cfg)
-        with autocast_context(cfg):
+        with torch.inference_mode(), autocast_context(cfg):
             feats = backbone(images)
+        with autocast_context(cfg):
             outputs = head(feats)
             losses = compute_cbl_losses(outputs, global_targets, idx_pad, mask_pad, valid_pad, cfg)
 
