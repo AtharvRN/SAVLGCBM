@@ -52,6 +52,7 @@ def load_run_config(config_dir: Path, args: argparse.Namespace) -> Config:
     payload.setdefault("dense_lr", 1e-3)
     payload.setdefault("dense_n_iters", 20)
     payload.setdefault("train_random_transforms", True)
+    payload.setdefault("learn_spatial_residual_scale", False)
     payload["device"] = args.device
     payload["workers"] = args.workers
     payload["batch_size"] = args.batch_size

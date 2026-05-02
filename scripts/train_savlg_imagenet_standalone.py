@@ -154,6 +154,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--spatial_stage", choices=["conv4", "conv5"], default="conv5")
     parser.add_argument("--residual_alpha", type=float, default=0.8)
+    parser.add_argument(
+        "--residual_spatial_pooling",
+        choices=["avg", "lse"],
+        default="lse",
+        help="Pooling for residual spatial logits. lse matches the CUB SAVLG residual branch.",
+    )
+    parser.add_argument(
+        "--learn_spatial_residual_scale",
+        action="store_true",
+        help="Learn a positive exp(log_scale) multiplier on the spatial residual branch.",
+    )
     parser.add_argument("--profile_steps", type=int, default=20)
     parser.add_argument("--warmup_steps", type=int, default=5)
     parser.add_argument("--log_every", type=int, default=20)
@@ -261,6 +272,13 @@ class Config:
     freeze_global_head: bool
     scheduler: str
     print_config: bool
+    # Old ImageNet checkpoints did not store this field and used avg pooling.
+    residual_spatial_pooling: str = "avg"
+    learn_spatial_residual_scale: bool = False
+    eval_every: int = 1
+    feature_batch_size: int = 256
+    feature_workers: int = 4
+    feature_prefetch_factor: int = 2
 
 
 def build_config(args: argparse.Namespace) -> Config:
@@ -340,6 +358,8 @@ def build_config(args: argparse.Namespace) -> Config:
         freeze_global_head=bool(args.freeze_global_head),
         scheduler=str(args.scheduler or "none"),
         print_config=bool(args.print_config),
+        residual_spatial_pooling=str(args.residual_spatial_pooling),
+        learn_spatial_residual_scale=bool(args.learn_spatial_residual_scale),
     )
 
 
@@ -378,6 +398,8 @@ def validate_config(cfg: Config) -> None:
         raise ValueError("--freeze_global_head requires --vlg_init_path")
     if cfg.vlg_init_path and not cfg.vlg_concepts_path:
         raise ValueError("--vlg_concepts_path is required when --vlg_init_path is set")
+    if getattr(cfg, "residual_spatial_pooling", "avg") not in {"avg", "lse"}:
+        raise ValueError("--residual_spatial_pooling must be one of: avg, lse")
 
 
 def amp_dtype(name: str) -> Optional[torch.dtype]:
@@ -1563,20 +1585,44 @@ class SharedConceptHead(nn.Module):
         }
 
 
+def pool_residual_spatial_logits(spatial_maps: torch.Tensor, pooling: str) -> torch.Tensor:
+    flat = spatial_maps.flatten(2)
+    if pooling == "avg":
+        return flat.mean(dim=-1)
+    if pooling == "lse":
+        # Match CUB SAVLG's normalized LSE pooling: constant maps keep the
+        # same logit scale, while localized peaks still influence the residual.
+        num_patches = flat.shape[-1]
+        return torch.logsumexp(flat, dim=-1) - math.log(max(num_patches, 1))
+    raise ValueError(f"Unsupported residual spatial pooling mode: {pooling}")
+
+
 class DualBranchConceptHead(nn.Module):
-    def __init__(self, n_concepts: int, spatial_stage: str, residual_alpha: float) -> None:
+    def __init__(
+        self,
+        n_concepts: int,
+        spatial_stage: str,
+        residual_alpha: float,
+        residual_spatial_pooling: str,
+        learn_spatial_residual_scale: bool = False,
+    ) -> None:
         super().__init__()
         in_channels = 1024 if spatial_stage == "conv4" else 2048
         self.spatial_stage = spatial_stage
         self.residual_alpha = residual_alpha
+        self.residual_spatial_pooling = residual_spatial_pooling
+        self.log_spatial_scale = (
+            nn.Parameter(torch.zeros(())) if learn_spatial_residual_scale else None
+        )
         self.global_head = nn.Linear(2048, n_concepts, bias=True)
         self.spatial = nn.Conv2d(in_channels, n_concepts, kernel_size=1, bias=True)
 
     def forward(self, feats: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         global_logits = self.global_head(feats["conv5"].mean(dim=(2, 3)))
         spatial_maps = self.spatial(feats[self.spatial_stage])
-        spatial_logits = spatial_maps.flatten(2).mean(dim=-1)
-        final_logits = global_logits + self.residual_alpha * spatial_logits
+        spatial_logits = pool_residual_spatial_logits(spatial_maps, self.residual_spatial_pooling)
+        spatial_scale = 1.0 if self.log_spatial_scale is None else torch.exp(self.log_spatial_scale)
+        final_logits = global_logits + self.residual_alpha * spatial_scale * spatial_logits
         return {
             "global_logits": global_logits,
             "spatial_logits": spatial_logits,
@@ -1586,9 +1632,20 @@ class DualBranchConceptHead(nn.Module):
 
 
 class MultiScaleDualBranchConceptHead(nn.Module):
-    def __init__(self, n_concepts: int, residual_alpha: float, fusion_dim: int = 2048) -> None:
+    def __init__(
+        self,
+        n_concepts: int,
+        residual_alpha: float,
+        residual_spatial_pooling: str,
+        learn_spatial_residual_scale: bool = False,
+        fusion_dim: int = 2048,
+    ) -> None:
         super().__init__()
         self.residual_alpha = residual_alpha
+        self.residual_spatial_pooling = residual_spatial_pooling
+        self.log_spatial_scale = (
+            nn.Parameter(torch.zeros(())) if learn_spatial_residual_scale else None
+        )
         self.global_head = nn.Linear(2048, n_concepts, bias=True)
         self.conv4_proj = nn.Conv2d(1024, fusion_dim, kernel_size=1, bias=False)
         self.conv5_proj = nn.Conv2d(2048, fusion_dim, kernel_size=1, bias=False)
@@ -1604,8 +1661,9 @@ class MultiScaleDualBranchConceptHead(nn.Module):
         )
         fused = F.relu(self.conv4_proj(feats["conv4"]) + conv5_up, inplace=False)
         spatial_maps = self.spatial(fused)
-        spatial_logits = spatial_maps.flatten(2).mean(dim=-1)
-        final_logits = global_logits + self.residual_alpha * spatial_logits
+        spatial_logits = pool_residual_spatial_logits(spatial_maps, self.residual_spatial_pooling)
+        spatial_scale = 1.0 if self.log_spatial_scale is None else torch.exp(self.log_spatial_scale)
+        final_logits = global_logits + self.residual_alpha * spatial_scale * spatial_logits
         return {
             "global_logits": global_logits,
             "spatial_logits": spatial_logits,
@@ -1624,12 +1682,19 @@ def build_model(cfg: Config, n_concepts: int) -> Tuple[nn.Module, nn.Module]:
     if cfg.spatial_branch_mode == "multiscale_conv45":
         if cfg.branch_arch != "dual":
             raise ValueError("multiscale_conv45 requires branch_arch=dual")
-        head = MultiScaleDualBranchConceptHead(n_concepts=n_concepts, residual_alpha=cfg.residual_alpha)
+        head = MultiScaleDualBranchConceptHead(
+            n_concepts=n_concepts,
+            residual_alpha=cfg.residual_alpha,
+            residual_spatial_pooling=getattr(cfg, "residual_spatial_pooling", "avg"),
+            learn_spatial_residual_scale=bool(getattr(cfg, "learn_spatial_residual_scale", False)),
+        )
     elif cfg.branch_arch == "dual":
         head = DualBranchConceptHead(
             n_concepts=n_concepts,
             spatial_stage=cfg.spatial_stage,
             residual_alpha=cfg.residual_alpha,
+            residual_spatial_pooling=getattr(cfg, "residual_spatial_pooling", "avg"),
+            learn_spatial_residual_scale=bool(getattr(cfg, "learn_spatial_residual_scale", False)),
         )
     else:
         head = SharedConceptHead(n_concepts=n_concepts, spatial_stage=cfg.spatial_stage)

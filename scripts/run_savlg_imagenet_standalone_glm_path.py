@@ -102,6 +102,7 @@ def load_config(config_dir: Path, device: str) -> Config:
     payload.setdefault("dense_lr", 1e-3)
     payload.setdefault("dense_n_iters", 20)
     payload.setdefault("train_random_transforms", True)
+    payload.setdefault("learn_spatial_residual_scale", False)
     payload["device"] = device
     payload["skip_final_layer"] = True
     payload["print_config"] = False
