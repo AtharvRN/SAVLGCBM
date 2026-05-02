@@ -62,6 +62,7 @@ def load_config(artifact_dir: Path, args: argparse.Namespace) -> Config:
     payload.setdefault("saga_table_device", "cpu")
     payload.setdefault("dense_lr", 1e-3)
     payload.setdefault("dense_n_iters", 20)
+    payload.setdefault("train_random_transforms", True)
     payload["device"] = args.device
     payload["batch_size"] = int(args.batch_size)
     payload["workers"] = int(args.workers)
@@ -376,7 +377,7 @@ def main() -> None:
         split="train",
         manifest=cfg.train_manifest,
     )
-    dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir)
+    dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir, cfg)
     filter_summary_path = artifact_dir / "concept_filter_summary.json"
     concept_filter_summary: Optional[Dict[str, Any]] = None
     if filter_summary_path.exists():

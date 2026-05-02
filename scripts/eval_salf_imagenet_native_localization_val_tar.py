@@ -180,6 +180,7 @@ def make_target_config(device: str) -> Config:
         seed=6885,
         min_image_bytes=2048,
         input_size=224,
+        train_random_transforms=True,
         mask_h=12,
         mask_w=12,
         patch_iou_thresh=0.5,

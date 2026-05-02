@@ -137,7 +137,7 @@ def make_datasets(cfg: Any, source_run_dir: Path):
     # Targets are not needed for feature extraction, but attaching them catches
     # split/config mismatches when the precomputed store is available.
     if cfg.precomputed_target_dir:
-        train_dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir)
+        train_dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir, cfg)
     if cfg.val_root:
         val_dataset_kwargs = {
             "root": cfg.val_root,
@@ -153,7 +153,7 @@ def make_datasets(cfg: Any, source_run_dir: Path):
             **val_dataset_kwargs,
         )
         if cfg.precomputed_target_dir:
-            val_dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir)
+            val_dataset_full.attach_precomputed_targets(cfg.precomputed_target_dir, cfg)
         train_indices = list(range(len(train_dataset_full)))
         if cfg.max_train_images > 0:
             train_indices = train_indices[: cfg.max_train_images]
