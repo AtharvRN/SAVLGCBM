@@ -11,7 +11,9 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 from scipy.io import loadmat
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+from torchvision.datasets import ImageFolder
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -49,7 +51,12 @@ def parse_args() -> argparse.Namespace:
         description="Evaluate standalone ImageNet SAVLG spatial maps on official val tar using GDINO val annotations."
     )
     parser.add_argument("--artifact_dir", required=True)
-    parser.add_argument("--val_tar", required=True)
+    parser.add_argument("--val_tar", default="", help="Official ImageNet val tar. Used when --val_root is not set.")
+    parser.add_argument(
+        "--val_root",
+        default="",
+        help="Optional extracted ImageNet val ImageFolder root. Enables parallel image decode with DataLoader workers.",
+    )
     parser.add_argument(
         "--annotation_dir",
         required=True,
@@ -63,6 +70,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--devkit_dir", default="", help="Optional ImageNet devkit, only used to sanity-check val label count.")
     parser.add_argument("--output_json", default="")
     parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--workers", type=int, default=0)
+    parser.add_argument("--prefetch_factor", type=int, default=2)
+    parser.add_argument("--persistent_workers", action="store_true")
+    parser.add_argument("--pin_memory", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--max_images", type=int, default=0)
     parser.add_argument("--activation_thresholds", default="0.3,0.5,0.7,0.9,mean")
@@ -96,7 +107,10 @@ def load_run_config(config_dir: Path, args: argparse.Namespace) -> Config:
     payload.setdefault("learn_spatial_residual_scale", False)
     payload["device"] = args.device
     payload["batch_size"] = int(args.batch_size)
-    payload["workers"] = 0
+    payload["workers"] = int(args.workers)
+    payload["prefetch_factor"] = int(args.prefetch_factor)
+    payload["persistent_workers"] = bool(args.persistent_workers)
+    payload["pin_memory"] = bool(args.pin_memory)
     payload["skip_final_layer"] = True
     payload["print_config"] = False
     return Config(**payload)
@@ -174,6 +188,75 @@ def iter_tar_samples(
             yield tensor, annotation, image_size, member.name
             if max_images > 0 and seen >= max_images:
                 break
+
+
+class ImageFolderLocalizationDataset(Dataset):
+    def __init__(
+        self,
+        val_root: Path,
+        annotation_val_dir: Path,
+        transform: transforms.Compose,
+        filename_to_annotation_path: Optional[Dict[str, Path]] = None,
+    ) -> None:
+        self.dataset = ImageFolder(str(val_root))
+        self.annotation_val_dir = annotation_val_dir
+        self.transform = transform
+        self.filename_to_annotation_path = filename_to_annotation_path
+
+    def __len__(self) -> int:
+        return len(self.dataset.samples)
+
+    def __getitem__(self, index: int):
+        image_path, _target = self.dataset.samples[index]
+        image_name = Path(image_path).name
+        match = VAL_RE.search(image_name)
+        if match is None:
+            raise ValueError(f"ImageNet val filename does not match expected pattern: {image_path}")
+        image_index = int(match.group(1))
+        with Image.open(image_path) as image:
+            image = image.convert("RGB")
+            image_size = (int(image.size[0]), int(image.size[1]))
+            tensor = self.transform(image)
+        annotation = load_annotation(
+            self.annotation_val_dir,
+            image_index,
+            image_name,
+            filename_to_annotation_path=self.filename_to_annotation_path,
+        )
+        return tensor, annotation, image_size, image_name
+
+
+def localization_collate(batch):
+    images, annotations, image_sizes, names = zip(*batch)
+    return list(images), list(annotations), list(image_sizes), list(names)
+
+
+def build_extracted_val_loader(
+    val_root: Path,
+    annotation_val_dir: Path,
+    transform: transforms.Compose,
+    cfg: Config,
+    args: argparse.Namespace,
+    filename_to_annotation_path: Optional[Dict[str, Path]] = None,
+) -> DataLoader:
+    dataset = ImageFolderLocalizationDataset(
+        val_root=val_root,
+        annotation_val_dir=annotation_val_dir,
+        transform=transform,
+        filename_to_annotation_path=filename_to_annotation_path,
+    )
+    kwargs: Dict[str, Any] = {
+        "dataset": dataset,
+        "batch_size": int(cfg.batch_size),
+        "shuffle": False,
+        "num_workers": int(args.workers),
+        "pin_memory": bool(args.pin_memory),
+        "collate_fn": localization_collate,
+    }
+    if int(args.workers) > 0:
+        kwargs["prefetch_factor"] = int(args.prefetch_factor)
+        kwargs["persistent_workers"] = bool(args.persistent_workers)
+    return DataLoader(**kwargs)
 
 
 def evaluate_batch(
@@ -280,7 +363,10 @@ def main() -> None:
     args = parse_args()
     artifact_dir = Path(args.artifact_dir).resolve()
     source_run_dir = resolve_source_run_dir(artifact_dir)
-    val_tar = Path(args.val_tar).resolve()
+    val_tar = Path(args.val_tar).resolve() if args.val_tar else None
+    val_root = Path(args.val_root).resolve() if args.val_root else None
+    if val_tar is None and val_root is None:
+        raise ValueError("one of --val_tar or --val_root is required")
     annotation_val_dir = resolve_val_annotation_dir(Path(args.annotation_dir).resolve())
     annotation_val_root = Path(args.annotation_val_root).resolve() if args.annotation_val_root else None
     filename_to_annotation_path = build_filename_to_annotation_path(annotation_val_dir, annotation_val_root)
@@ -312,22 +398,32 @@ def main() -> None:
     label_count = load_val_label_count(Path(args.devkit_dir).resolve()) if args.devkit_dir else None
 
     start = time.perf_counter()
-    images: List[torch.Tensor] = []
-    annotations: List[List[Dict[str, Any]]] = []
-    image_sizes: List[Tuple[int, int]] = []
     total_images = 0
     images_with_targets = 0
-    for image_tensor, annotation, image_size, name in iter_tar_samples(
-        val_tar,
-        annotation_val_dir,
-        transform,
-        int(args.max_images),
-        filename_to_annotation_path=filename_to_annotation_path,
-    ):
-        images.append(image_tensor)
-        annotations.append(annotation)
-        image_sizes.append(image_size)
-        if len(images) >= int(cfg.batch_size):
+    last_name = ""
+    if val_root is not None:
+        loader = build_extracted_val_loader(
+            val_root,
+            annotation_val_dir,
+            transform,
+            cfg,
+            args,
+            filename_to_annotation_path=filename_to_annotation_path,
+        )
+        print(
+            f"[loc-val] loading extracted val root {val_root} with workers={int(args.workers)} "
+            f"prefetch_factor={int(args.prefetch_factor)}",
+            flush=True,
+        )
+        for images, annotations, image_sizes, names in loader:
+            if int(args.max_images) > 0 and total_images + len(images) > int(args.max_images):
+                keep = int(args.max_images) - total_images
+                if keep <= 0:
+                    break
+                images = images[:keep]
+                annotations = annotations[:keep]
+                image_sizes = image_sizes[:keep]
+                names = names[:keep]
             batch_with_targets, _ = evaluate_batch(
                 images,
                 annotations,
@@ -346,42 +442,88 @@ def main() -> None:
             )
             total_images += len(images)
             images_with_targets += batch_with_targets
+            last_name = names[-1] if names else last_name
             if args.log_every > 0 and total_images % int(args.log_every) == 0:
                 elapsed = time.perf_counter() - start
                 print(
                     f"[loc-val] n={total_images} images_with_targets={images_with_targets} "
-                    f"instances={int(distribution['instances'])} ips={total_images / max(elapsed, 1e-6):.2f} last={name}",
+                    f"instances={int(distribution['instances'])} ips={total_images / max(elapsed, 1e-6):.2f} last={last_name}",
                     flush=True,
                 )
-            images.clear()
-            annotations.clear()
-            image_sizes.clear()
-    if images:
-        batch_with_targets, _ = evaluate_batch(
-            images,
-            annotations,
-            image_sizes,
-            backbone,
-            head,
-            cfg,
-            concept_to_idx,
-            len(concepts),
-            args,
-            threshold_raw,
-            distribution,
-            thresholds,
-            include_mean_threshold,
-            box_iou_thresholds,
-        )
-        total_images += len(images)
-        images_with_targets += batch_with_targets
+            if int(args.max_images) > 0 and total_images >= int(args.max_images):
+                break
+    else:
+        images: List[torch.Tensor] = []
+        annotations: List[List[Dict[str, Any]]] = []
+        image_sizes: List[Tuple[int, int]] = []
+        assert val_tar is not None
+        for image_tensor, annotation, image_size, name in iter_tar_samples(
+            val_tar,
+            annotation_val_dir,
+            transform,
+            int(args.max_images),
+            filename_to_annotation_path=filename_to_annotation_path,
+        ):
+            images.append(image_tensor)
+            annotations.append(annotation)
+            image_sizes.append(image_size)
+            last_name = name
+            if len(images) >= int(cfg.batch_size):
+                batch_with_targets, _ = evaluate_batch(
+                    images,
+                    annotations,
+                    image_sizes,
+                    backbone,
+                    head,
+                    cfg,
+                    concept_to_idx,
+                    len(concepts),
+                    args,
+                    threshold_raw,
+                    distribution,
+                    thresholds,
+                    include_mean_threshold,
+                    box_iou_thresholds,
+                )
+                total_images += len(images)
+                images_with_targets += batch_with_targets
+                if args.log_every > 0 and total_images % int(args.log_every) == 0:
+                    elapsed = time.perf_counter() - start
+                    print(
+                        f"[loc-val] n={total_images} images_with_targets={images_with_targets} "
+                        f"instances={int(distribution['instances'])} ips={total_images / max(elapsed, 1e-6):.2f} last={last_name}",
+                        flush=True,
+                    )
+                images.clear()
+                annotations.clear()
+                image_sizes.clear()
+        if images:
+            batch_with_targets, _ = evaluate_batch(
+                images,
+                annotations,
+                image_sizes,
+                backbone,
+                head,
+                cfg,
+                concept_to_idx,
+                len(concepts),
+                args,
+                threshold_raw,
+                distribution,
+                thresholds,
+                include_mean_threshold,
+                box_iou_thresholds,
+            )
+            total_images += len(images)
+            images_with_targets += batch_with_targets
 
     elapsed = time.perf_counter() - start
     instances = max(int(distribution["instances"]), 1)
     payload = {
         "artifact_dir": str(artifact_dir),
         "source_run_dir": str(source_run_dir),
-        "val_tar": str(val_tar),
+        "val_tar": str(val_tar) if val_tar is not None else "",
+        "val_root": str(val_root) if val_root is not None else "",
         "annotation_val_dir": str(annotation_val_dir),
         "annotation_val_root": str(annotation_val_root) if annotation_val_root is not None else "",
         "devkit_label_count": label_count,
@@ -394,6 +536,10 @@ def main() -> None:
             "box_iou_thresholds": args.box_iou_thresholds,
             "gt_threshold": float(args.gt_threshold),
             "max_images": int(args.max_images),
+            "workers": int(args.workers),
+            "prefetch_factor": int(args.prefetch_factor),
+            "persistent_workers": bool(args.persistent_workers),
+            "pin_memory": bool(args.pin_memory),
         },
         "metrics": {
             "images_seen": total_images,
