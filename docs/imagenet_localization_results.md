@@ -28,10 +28,22 @@ Remote source paths:
 - `mass_in_gt`: fraction of heatmap mass falling inside the GT mask.
 - `point_hit`: whether the heatmap argmax lies inside the GT mask.
 - `mask_iou@t`: IoU between thresholded predicted mask and GT mask, where `t` is the heatmap threshold.
-- `box_acc@0.5`: fraction of concept/image predictions whose predicted tight box has IoU at least `0.5` with the combined GT box.
-- `box_acc` is not mAP. It is a direct localization accuracy over one predicted box per target. CUB code computed AP-style mAP separately, but some CUB docs/tables used `mAP@...` wording for logged MaxBoxAcc sweep values.
+- `MeanIoU`: shorthand here for `mask_iou@mean`, i.e. mask IoU after thresholding the heatmap at its mean value.
+- `LocAcc@0.5`: localization accuracy at IoU `0.5`, i.e. the fraction of concept/image predictions whose predicted tight box has IoU at least `0.5` with the combined GT box.
+- `LocAcc@0.3`: the same localization-accuracy metric at IoU `0.3`.
+- `LocAcc` is not mAP. It is a direct GT-known localization accuracy over one predicted box per target. CUB code computed AP-style mAP separately, but some older CUB docs/tables used `mAP@...` wording for logged MaxBoxAcc sweep values.
 
 ## Results
+
+Headline localization metrics:
+
+| Metric | VLG-CBM Grad-CAM | SALF-CBM Native | SAVLG Native |
+|---|---:|---:|---:|
+| `LocAcc@0.3`, heatmap `mean` | 0.5246 | 0.5985 | 0.6542 |
+| `LocAcc@0.5`, heatmap `mean` | 0.3572 | 0.4375 | 0.4873 |
+| `MeanIoU` | 0.2405 | 0.2691 | 0.3449 |
+
+Other localization metrics:
 
 | Metric | VLG-CBM Grad-CAM | SALF-CBM Native | SAVLG Native |
 |---|---:|---:|---:|
@@ -42,29 +54,28 @@ Remote source paths:
 | `mass_in_gt` | 0.4748 | 0.4251 | 0.4975 |
 | `point_hit` | 0.4161 | 0.4114 | 0.5787 |
 | `mask_iou@0.3` | 0.1270 | 0.3665 | 0.4421 |
-| `box_acc@0.5`, heatmap `0.3` | 0.2162 | 0.4397 | 0.4775 |
+| `LocAcc@0.5`, heatmap `0.3` | 0.2162 | 0.4397 | 0.4775 |
 | `mask_iou@0.5` | 0.0851 | 0.2703 | 0.3670 |
-| `box_acc@0.5`, heatmap `0.5` | 0.1501 | 0.4098 | 0.4777 |
-| `mask_iou@mean` | 0.2405 | 0.2691 | 0.3449 |
-| `box_acc@0.5`, heatmap `mean` | 0.3572 | 0.4375 | 0.4873 |
+| `LocAcc@0.5`, heatmap `0.5` | 0.1501 | 0.4098 | 0.4777 |
 
 Relative to VLG-CBM Grad-CAM:
 
 | Metric | SALF-CBM Delta | SAVLG Delta |
 |---|---:|---:|
+| `LocAcc@0.3`, heatmap `mean` | +0.0740 | +0.1296 |
+| `LocAcc@0.5`, heatmap `mean` | +0.0803 | +0.1301 |
+| `MeanIoU` | +0.0286 | +0.1044 |
 | `soft_iou` | -0.1044 | -0.0068 |
 | `mass_in_gt` | -0.0497 | +0.0226 |
 | `point_hit` | -0.0047 | +0.1626 |
 | `mask_iou@0.3` | +0.2395 | +0.3151 |
-| `box_acc@0.5`, heatmap `0.3` | +0.2235 | +0.2613 |
+| `LocAcc@0.5`, heatmap `0.3` | +0.2235 | +0.2613 |
 | `mask_iou@0.5` | +0.1852 | +0.2819 |
-| `box_acc@0.5`, heatmap `0.5` | +0.2597 | +0.3276 |
-| `mask_iou@mean` | +0.0286 | +0.1044 |
-| `box_acc@0.5`, heatmap `mean` | +0.0803 | +0.1301 |
+| `LocAcc@0.5`, heatmap `0.5` | +0.2597 | +0.3276 |
 
 ## Interpretation
 
-VLG-CBM Grad-CAM and SAVLG native maps have similar continuous overlap by `soft_iou`, with VLG-CBM slightly higher. However, SAVLG is much stronger once maps are used as actual localization masks or boxes. SAVLG has substantially higher point-hit, thresholded mask IoU, recall, F1, and box accuracy.
+VLG-CBM Grad-CAM and SAVLG native maps have similar continuous overlap by `soft_iou`, with VLG-CBM slightly higher. However, SAVLG is much stronger once maps are used as actual localization masks or boxes. SAVLG has substantially higher point-hit, thresholded mask IoU, recall, F1, and localization accuracy.
 
 The practical takeaway is that SAVLG produces more usable direct localization maps than VLG-CBM post-hoc Grad-CAM under this ImageNet protocol, even though the continuous `soft_iou` score alone does not show the improvement.
 
@@ -158,10 +169,10 @@ Full-val result:
 | `mass_in_gt` | 0.4251 |
 | `point_hit` | 0.4114 |
 | `mask_iou@0.3` | 0.3665 |
-| `box_acc@0.5`, heatmap `0.3` | 0.4397 |
+| `LocAcc@0.5`, heatmap `0.3` | 0.4397 |
 | `mask_iou@0.5` | 0.2703 |
-| `box_acc@0.5`, heatmap `0.5` | 0.4098 |
+| `LocAcc@0.5`, heatmap `0.5` | 0.4098 |
 | `mask_iou@mean` | 0.2691 |
-| `box_acc@0.5`, heatmap `mean` | 0.4375 |
+| `LocAcc@0.5`, heatmap `mean` | 0.4375 |
 
-Compared with SAVLG native maps, SALF-CBM is weaker on `point_hit`, thresholded `mask_iou`, and `box_acc@0.5`, but it is substantially stronger than VLG-CBM Grad-CAM on thresholded mask and box localization.
+Compared with SAVLG native maps, SALF-CBM is weaker on `point_hit`, thresholded `mask_iou`, and `LocAcc@0.5`, but it is substantially stronger than VLG-CBM Grad-CAM on thresholded mask and box localization.

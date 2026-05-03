@@ -264,6 +264,38 @@ Interpretation:
   - raw sparse top-1 `0.76926`
 - So this checkpoint remains useful for exact-truncation follow-up, but it is not naturally sparse enough at low NEC without an explicit truncation step.
 
+### `mask_w=1.0` sparse localization on 50k val
+
+The best saved sparse model was also evaluated for localization on the full 50k ImageNet val tar:
+
+- artifact:
+  - `/workspace/savlg_imagenet_standalone_runs/savlg_imagenet_full_7ep_a100_dense_maskw1_20260430T092613Z_savlg-imagenet-full-a100-7ep-dense-maskw1-jsqmp/glm_one_lambda_lam3e4_1000it_tol1e6_cpu_table_eval100`
+- localization JSON:
+  - `/workspace/savlg_imagenet_standalone_runs/savlg_imagenet_full_7ep_a100_dense_maskw1_20260430T092613Z_savlg-imagenet-full-a100-7ep-dense-maskw1-jsqmp/glm_one_lambda_lam3e4_1000it_tol1e6_cpu_table_eval100/localization_imagenet_val_tar_sparse.json`
+
+Headline localization metrics:
+
+| Metric | Value |
+|---|---:|
+| `LocAcc@0.3`, heatmap `mean` | `0.90894` |
+| `LocAcc@0.5`, heatmap `mean` | `0.60047` |
+| `MeanIoU` | `0.42558` |
+
+Other localization metrics:
+
+| Metric | Value |
+|---|---:|
+| `soft_iou` | `0.40754` |
+| `mass_in_gt` | `0.59783` |
+| `point_hit` | `0.75024` |
+| `mask_iou@0.5` | `0.45055` |
+
+This is the strongest SAVLG localization result recorded so far in this workspace. It also clearly outperforms the earlier SALF localization baseline on:
+
+- `soft_iou`
+- `point_hit`
+- `LocAcc@0.5`
+
 ### `mask_w=1.0` exact-truncation NEC eval on 50k val
 
 To keep the saved truncated weights separate from the raw GLM run, the exact-truncation eval was staged under:
