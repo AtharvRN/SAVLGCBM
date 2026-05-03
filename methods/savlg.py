@@ -1317,6 +1317,7 @@ class SAVLGCBM(nn.Module):
             global_outputs,
             spatial_maps,
             self.args,
+            concept_layer=self.concept_layer,
         )
         return final_logits, spatial_maps
 
@@ -1393,6 +1394,9 @@ class DualBranchMixedConceptLayer(nn.Module):
         self.spatial_layer = spatial_layer
         self.args = args
         self.spatial_stage = str(spatial_stage or getattr(args, "savlg_spatial_stage", "conv5")).lower()
+        if getattr(args, "savlg_learnable_alpha", False):
+            init_alpha = max(1e-4, float(getattr(args, "savlg_residual_spatial_alpha", 0.1)))
+            self.log_spatial_scale = nn.Parameter(torch.tensor(math.log(init_alpha)))
 
     def _spatial_feats(self, x):
         if isinstance(x, dict):
@@ -1429,6 +1433,9 @@ class MultiScaleSAVLGConceptLayer(nn.Module):
         self.conv5_proj = nn.Conv2d(conv5_dim, fusion_dim, kernel_size=1, bias=False).to(args.device)
         self.spatial_layer = build_single_spatial_concept_layer(args, fusion_dim, n_concepts)
         self.args = args
+        if getattr(args, "savlg_learnable_alpha", False):
+            init_alpha = max(1e-4, float(getattr(args, "savlg_residual_spatial_alpha", 0.1)))
+            self.log_spatial_scale = nn.Parameter(torch.tensor(math.log(init_alpha)))
 
     def _fuse_spatial_features(self, feats) -> torch.Tensor:
         if not isinstance(feats, dict):
@@ -1723,11 +1730,16 @@ def compute_savlg_concept_logits(
     global_outputs: torch.Tensor,
     spatial_maps: torch.Tensor,
     args,
+    concept_layer: Optional[nn.Module] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     global_logits = pool_global_concept_outputs(global_outputs, args)
     if savlg_residual_coupling_enabled(args):
         spatial_logits = pool_residual_spatial_logits(spatial_maps, args)
-        final_logits = global_logits + float(getattr(args, "savlg_residual_spatial_alpha", 0.0)) * spatial_logits
+        if concept_layer is not None and hasattr(concept_layer, "log_spatial_scale"):
+            alpha = concept_layer.log_spatial_scale.exp()
+        else:
+            alpha = float(getattr(args, "savlg_residual_spatial_alpha", 0.0))
+        final_logits = global_logits + alpha * spatial_logits
         return global_logits, spatial_logits, final_logits
     spatial_logits = torch.zeros_like(global_logits)
     return global_logits, spatial_logits, global_logits
@@ -2155,6 +2167,7 @@ def train_concept_head(
                     global_outputs,
                     spatial_maps,
                     args,
+                    concept_layer=concept_layer,
                 )
                 local_trust_weights = compute_local_trust_weights(global_concepts, args)
                 local_mil_logits = None
@@ -2273,6 +2286,7 @@ def train_concept_head(
                     global_outputs,
                     spatial_maps,
                     args,
+                    concept_layer=concept_layer,
                 )
                 local_trust_weights = compute_local_trust_weights(global_concepts, args)
                 local_mil_logits = None
@@ -2370,12 +2384,16 @@ def train_concept_head(
             epochs_without_improvement = 0
         elif (epoch + 1) >= min_epochs:
             epochs_without_improvement += 1
+        alpha_str = ""
+        if hasattr(concept_layer, "log_spatial_scale"):
+            alpha_str = f" alpha={concept_layer.log_spatial_scale.exp().item():.4f}"
         logger.info(
-            "[SAVLG CBL] epoch={} train_loss={:.6f} val_loss={:.6f} best_val={:.6f}",
+            "[SAVLG CBL] epoch={} train_loss={:.6f} val_loss={:.6f} best_val={:.6f}{}",
             epoch,
             train_loss,
             val_loss,
             best_loss,
+            alpha_str,
         )
         if (
             early_stop_patience > 0
@@ -2418,6 +2436,7 @@ def extract_global_concepts(
                 global_outputs,
                 spatial_maps,
                 args,
+                concept_layer=concept_layer,
             )
             concept_features.append(final_logits.cpu())
             labels.append(target)
@@ -2453,6 +2472,7 @@ def evaluate_savlg_accuracy(
                 global_outputs,
                 spatial_maps,
                 args,
+                concept_layer=concept_layer,
             )
             final_logits = (final_logits - mean.to(args.device)) / std.to(args.device)
             pred = final_layer(final_logits).argmax(dim=-1).cpu()
@@ -2629,129 +2649,136 @@ def train_savlg_cbm(args):
         teacher=teacher,
     )
 
-    if _savlg_feature_cache_enabled(args):
-        cached_loader_kwargs = {
-            "batch_size": args.cbl_batch_size,
-            "shuffle": False,
-            "num_workers": args.num_workers,
-            "pin_memory": True,
+    if getattr(args, "cbl_only", False):
+        with open(os.path.join(save_dir, "concepts.txt"), "w") as f:
+            f.write("\n".join(concepts))
+        torch.save(concept_layer.state_dict(), os.path.join(save_dir, "concept_layer.pt"))
+        logger.info("cbl_only=True — saved concept_layer.pt, skipping sparse final layer")
+    else:
+        if _savlg_feature_cache_enabled(args):
+            cached_loader_kwargs = {
+                "batch_size": args.cbl_batch_size,
+                "shuffle": False,
+                "num_workers": args.num_workers,
+                "pin_memory": True,
+            }
+            if int(args.num_workers) > 0:
+                cached_loader_kwargs["persistent_workers"] = True
+            train_loader = DataLoader(
+                CachedFeatureLabelDataset(train_cached["feats"], train_cached["labels"]),
+                **cached_loader_kwargs,
+            )
+            val_loader = DataLoader(
+                CachedFeatureLabelDataset(val_cached["feats"], val_cached["labels"]),
+                **cached_loader_kwargs,
+            )
+        else:
+            train_loader = DataLoader(
+                train_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
+            )
+            val_loader = DataLoader(
+                val_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
+            )
+        train_concepts, train_labels = extract_global_concepts(args, backbone, concept_layer, train_loader)
+        val_concepts, val_labels = extract_global_concepts(args, backbone, concept_layer, val_loader)
+
+        train_mean = train_concepts.mean(dim=0, keepdim=True)
+        train_std = torch.clamp(train_concepts.std(dim=0, keepdim=True), min=1e-6)
+        train_concepts = (train_concepts - train_mean) / train_std
+        val_concepts = (val_concepts - train_mean) / train_std
+
+        train_final_loader = DataLoader(
+            IndexedTensorDataset(train_concepts, train_labels),
+            batch_size=args.saga_batch_size,
+            shuffle=True,
+        )
+        val_final_loader = DataLoader(
+            TensorDataset(val_concepts, val_labels),
+            batch_size=args.saga_batch_size,
+            shuffle=False,
+        )
+        final_layer = nn.Linear(len(concepts), len(classes)).to(args.device)
+        final_layer.weight.data.zero_()
+        final_layer.bias.data.zero_()
+        if args.dense:
+            output_proj = train_dense_final(
+                final_layer,
+                train_final_loader,
+                val_final_loader,
+                args.saga_n_iters,
+                args.dense_lr,
+                device=args.device,
+            )
+        else:
+            output_proj = train_sparse_final(
+                final_layer,
+                train_final_loader,
+                val_final_loader,
+                args.saga_n_iters,
+                args.saga_lam,
+                step_size=args.saga_step_size,
+                device=args.device,
+            )
+
+        W_g = output_proj["path"][0]["weight"]
+        b_g = output_proj["path"][0]["bias"]
+        final_layer.load_state_dict({"weight": W_g, "bias": b_g})
+
+        if getattr(args, "skip_train_val_eval", False):
+            train_accuracy = None
+            val_accuracy = None
+        else:
+            train_accuracy = evaluate_savlg_accuracy(
+                args, backbone, concept_layer, train_mean, train_std, final_layer, train_dataset
+            )
+            val_accuracy = evaluate_savlg_accuracy(
+                args, backbone, concept_layer, train_mean, train_std, final_layer, val_dataset
+            )
+        if getattr(args, "skip_test_eval", False):
+            test_accuracy = None
+        else:
+            test_accuracy = evaluate_savlg_accuracy(
+                args, backbone, concept_layer, train_mean, train_std, final_layer, test_dataset
+            )
+
+        with open(os.path.join(save_dir, "concepts.txt"), "w") as f:
+            f.write("\n".join(concepts))
+        torch.save(concept_layer.state_dict(), os.path.join(save_dir, "concept_layer.pt"))
+        torch.save(W_g, os.path.join(save_dir, "W_g.pt"))
+        torch.save(b_g, os.path.join(save_dir, "b_g.pt"))
+        torch.save(train_mean, os.path.join(save_dir, "proj_mean.pt"))
+        torch.save(train_std, os.path.join(save_dir, "proj_std.pt"))
+
+        test_metrics = {"accuracy": test_accuracy}
+        metrics_to_write = [("test_metrics.json", test_metrics)]
+        if not getattr(args, "skip_train_val_eval", False):
+            metrics_to_write = [
+                ("train_metrics.json", {"accuracy": train_accuracy}),
+                ("val_metrics.json", {"accuracy": val_accuracy}),
+                ("test_metrics.json", test_metrics),
+            ]
+        for filename, payload in metrics_to_write:
+            with open(os.path.join(save_dir, filename), "w") as f:
+                json.dump(payload, f, indent=2)
+
+        path0 = output_proj["path"][0]
+        metrics_payload = {
+            key: float(path0[key]) for key in ("lam", "lr", "alpha", "time")
         }
-        if int(args.num_workers) > 0:
-            cached_loader_kwargs["persistent_workers"] = True
-        train_loader = DataLoader(
-            CachedFeatureLabelDataset(train_cached["feats"], train_cached["labels"]),
-            **cached_loader_kwargs,
-        )
-        val_loader = DataLoader(
-            CachedFeatureLabelDataset(val_cached["feats"], val_cached["labels"]),
-            **cached_loader_kwargs,
-        )
-    else:
-        train_loader = DataLoader(
-            train_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
-        )
-        val_loader = DataLoader(
-            val_dataset, batch_size=args.cbl_batch_size, shuffle=False, num_workers=args.num_workers
-        )
-    train_concepts, train_labels = extract_global_concepts(args, backbone, concept_layer, train_loader)
-    val_concepts, val_labels = extract_global_concepts(args, backbone, concept_layer, val_loader)
-
-    train_mean = train_concepts.mean(dim=0, keepdim=True)
-    train_std = torch.clamp(train_concepts.std(dim=0, keepdim=True), min=1e-6)
-    train_concepts = (train_concepts - train_mean) / train_std
-    val_concepts = (val_concepts - train_mean) / train_std
-
-    train_final_loader = DataLoader(
-        IndexedTensorDataset(train_concepts, train_labels),
-        batch_size=args.saga_batch_size,
-        shuffle=True,
-    )
-    val_final_loader = DataLoader(
-        TensorDataset(val_concepts, val_labels),
-        batch_size=args.saga_batch_size,
-        shuffle=False,
-    )
-    final_layer = nn.Linear(len(concepts), len(classes)).to(args.device)
-    final_layer.weight.data.zero_()
-    final_layer.bias.data.zero_()
-    if args.dense:
-        output_proj = train_dense_final(
-            final_layer,
-            train_final_loader,
-            val_final_loader,
-            args.saga_n_iters,
-            args.dense_lr,
-            device=args.device,
-        )
-    else:
-        output_proj = train_sparse_final(
-            final_layer,
-            train_final_loader,
-            val_final_loader,
-            args.saga_n_iters,
-            args.saga_lam,
-            step_size=args.saga_step_size,
-            device=args.device,
-        )
-
-    W_g = output_proj["path"][0]["weight"]
-    b_g = output_proj["path"][0]["bias"]
-    final_layer.load_state_dict({"weight": W_g, "bias": b_g})
-
-    if getattr(args, "skip_train_val_eval", False):
-        train_accuracy = None
-        val_accuracy = None
-    else:
-        train_accuracy = evaluate_savlg_accuracy(
-            args, backbone, concept_layer, train_mean, train_std, final_layer, train_dataset
-        )
-        val_accuracy = evaluate_savlg_accuracy(
-            args, backbone, concept_layer, train_mean, train_std, final_layer, val_dataset
-        )
-    if getattr(args, "skip_test_eval", False):
-        test_accuracy = None
-    else:
-        test_accuracy = evaluate_savlg_accuracy(
-            args, backbone, concept_layer, train_mean, train_std, final_layer, test_dataset
-        )
-
-    with open(os.path.join(save_dir, "concepts.txt"), "w") as f:
-        f.write("\n".join(concepts))
-    torch.save(concept_layer.state_dict(), os.path.join(save_dir, "concept_layer.pt"))
-    torch.save(W_g, os.path.join(save_dir, "W_g.pt"))
-    torch.save(b_g, os.path.join(save_dir, "b_g.pt"))
-    torch.save(train_mean, os.path.join(save_dir, "proj_mean.pt"))
-    torch.save(train_std, os.path.join(save_dir, "proj_std.pt"))
-
-    test_metrics = {"accuracy": test_accuracy}
-    metrics_to_write = [("test_metrics.json", test_metrics)]
-    if not getattr(args, "skip_train_val_eval", False):
-        metrics_to_write = [
-            ("train_metrics.json", {"accuracy": train_accuracy}),
-            ("val_metrics.json", {"accuracy": val_accuracy}),
-            ("test_metrics.json", test_metrics),
-        ]
-    for filename, payload in metrics_to_write:
-        with open(os.path.join(save_dir, filename), "w") as f:
-            json.dump(payload, f, indent=2)
-
-    path0 = output_proj["path"][0]
-    metrics_payload = {
-        key: float(path0[key]) for key in ("lam", "lr", "alpha", "time")
-    }
-    metrics_payload["metrics"] = path0["metrics"]
-    nnz = int((W_g.abs() > 1e-5).sum().item())
-    total = int(W_g.numel())
-    metrics_payload["sparsity"] = {
-        "Non-zero weights": nnz,
-        "Total weights": total,
-        "Percentage non-zero": nnz / max(total, 1),
-    }
-    with open(os.path.join(save_dir, "metrics.txt"), "w") as f:
-        json.dump(metrics_payload, f, indent=2)
+        metrics_payload["metrics"] = path0["metrics"]
+        nnz = int((W_g.abs() > 1e-5).sum().item())
+        total = int(W_g.numel())
+        metrics_payload["sparsity"] = {
+            "Non-zero weights": nnz,
+            "Total weights": total,
+            "Percentage non-zero": nnz / max(total, 1),
+        }
+        with open(os.path.join(save_dir, "metrics.txt"), "w") as f:
+            json.dump(metrics_payload, f, indent=2)
 
     method_log = {
         "cbm_variant": "savlg_cbm",
+        "cbl_only": bool(getattr(args, "cbl_only", False)),
         "annotation_dir": args.annotation_dir,
         "annotation_threshold": float(getattr(args, "cbl_confidence_threshold", 0.15)),
         "concept_filter_mode": _savlg_concept_filter_mode(args),
@@ -2765,12 +2792,6 @@ def train_savlg_cbm(args):
             "spatial_branch_mode": str(getattr(args, "savlg_spatial_branch_mode", "shared_stage")),
             "hidden_layers": args.cbl_hidden_layers if args.cbl_type == "mlp" else 0,
             "use_batchnorm": bool(args.cbl_use_batchnorm) if args.cbl_type == "mlp" else False,
-        },
-        "sparse_final_layer": {
-            "solver": "glm_saga",
-            "lam": args.saga_lam,
-            "saga_iters": args.saga_n_iters,
-            "saga_batch_size": args.saga_batch_size,
         },
         "spatial_losses": {
             "loss_global_concept_w": _savlg_global_concept_loss_weight(args),
@@ -2852,6 +2873,21 @@ def train_savlg_cbm(args):
     }
     with open(os.path.join(save_dir, "method_log.json"), "w") as f:
         json.dump(method_log, f, indent=2)
+
+    if getattr(args, "cbl_only", False):
+        write_artifacts(
+            save_dir,
+            {
+                "model_name": args.model_name,
+                "dataset": args.dataset,
+                "backbone": args.backbone,
+                "concept_layer_format": "concept_layer.pt",
+                "supervision_cache_format": ["*_supervision.pt"],
+                "cbl_only": True,
+            },
+        )
+        logger.info("SAVLG-CBM cbl_only training complete — saved to {}", save_dir)
+        return save_dir
 
     write_artifacts(
         save_dir,
