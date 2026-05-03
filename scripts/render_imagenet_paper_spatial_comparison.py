@@ -49,13 +49,38 @@ DEFAULT_GROUP_PATTERNS: Dict[str, List[str]] = {
 }
 
 
+class SoftmaxPooling2D(torch.nn.Module):
+    def __init__(self, kernel_size: Tuple[int, int]) -> None:
+        super().__init__()
+        self.kernel_size = kernel_size
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        n, c, _h, _w = x.shape
+        kh, kw = self.kernel_size
+        patches = F.unfold(x, kernel_size=(kh, kw), stride=(kh, kw))
+        patches = patches.view(n, c, kh * kw, -1)
+        weights = F.softmax(patches, dim=2)
+        return (patches * weights).sum(dim=2).view(n, c, 1, 1)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render paper-style ImageNet SAVLG vs VLG spatial comparisons.")
     parser.add_argument("--val_tar", required=True)
+    parser.add_argument(
+        "--val_image_root",
+        default="",
+        help="Optional extracted ImageNet val ImageFolder root; selected images are read directly when available.",
+    )
     parser.add_argument("--devkit_dir", required=True)
     parser.add_argument("--annotation_dir", required=True)
     parser.add_argument("--annotation_val_root", default="")
+    parser.add_argument(
+        "--annotation_mapping_json",
+        default="",
+        help="Optional val filename-to-annotation mapping JSON with image_name and annotation_path/file entries.",
+    )
     parser.add_argument("--savlg_artifact_dir", required=True)
+    parser.add_argument("--salf_dir", default="/workspace/salf-cbm_models/imagenet")
     parser.add_argument("--vlg_load_dir", required=True)
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--device", default="cuda")
@@ -64,6 +89,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concepts_per_image", type=int, default=3)
     parser.add_argument("--concept_manifest_json", default="")
     parser.add_argument("--map_normalization", default="concept_zscore_minmax", choices=["minmax", "sigmoid", "concept_zscore_minmax"])
+    parser.add_argument("--paper_clean_labels", action="store_true", help="Use compact paper-facing titles without file names or scores.")
+    parser.add_argument(
+        "--boxes_on_maps",
+        action="store_true",
+        help="Also draw GDINO boxes on model heatmap columns; by default boxes are shown only on the original image.",
+    )
+    parser.add_argument("--savlg_display_name", default="SAVLG native")
+    parser.add_argument("--salf_display_name", default="SALF native")
+    parser.add_argument("--vlg_display_name", default="VLG-CBM Grad-CAM")
     parser.add_argument("--max_scan_images", type=int, default=50000)
     return parser.parse_args()
 
@@ -101,6 +135,66 @@ def add_box(ax, box: Sequence[float], color: str, label: str = "") -> None:
             weight="bold",
             backgroundcolor=(1, 1, 1, 0.68),
         )
+
+
+def resize_center_crop_box(
+    box: Sequence[float],
+    original_size: Tuple[int, int],
+    resize_short: int = 256,
+    crop_size: int = 224,
+) -> Optional[List[float]]:
+    """Map an original-image xyxy box through Resize(short) + CenterCrop.
+
+    GDINO annotations are stored in original-image pixel coordinates, while the
+    rendered images are center-cropped model inputs. Drawing raw boxes directly
+    on the crop is wrong, so this mirrors torchvision's validation transform.
+    """
+    orig_w, orig_h = int(original_size[0]), int(original_size[1])
+    if orig_w <= 0 or orig_h <= 0:
+        return None
+    x1, y1, x2, y2 = [float(v) for v in box]
+    if max(abs(x1), abs(y1), abs(x2), abs(y2)) <= 1.5:
+        x1, x2 = x1 * orig_w, x2 * orig_w
+        y1, y2 = y1 * orig_h, y2 * orig_h
+
+    if orig_w <= orig_h:
+        resized_w = int(resize_short)
+        resized_h = int(resize_short * orig_h / orig_w)
+    else:
+        resized_h = int(resize_short)
+        resized_w = int(resize_short * orig_w / orig_h)
+    scale_x = resized_w / float(orig_w)
+    scale_y = resized_h / float(orig_h)
+    crop_left = max((resized_w - crop_size) / 2.0, 0.0)
+    crop_top = max((resized_h - crop_size) / 2.0, 0.0)
+
+    mapped = [
+        x1 * scale_x - crop_left,
+        y1 * scale_y - crop_top,
+        x2 * scale_x - crop_left,
+        y2 * scale_y - crop_top,
+    ]
+    clipped = [
+        min(max(mapped[0], 0.0), float(crop_size)),
+        min(max(mapped[1], 0.0), float(crop_size)),
+        min(max(mapped[2], 0.0), float(crop_size)),
+        min(max(mapped[3], 0.0), float(crop_size)),
+    ]
+    if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
+        return None
+    return clipped
+
+
+def map_record_to_display_crop(rec: Dict[str, Any], original_size: Tuple[int, int], crop_size: int) -> Dict[str, Any]:
+    mapped_boxes = []
+    for box in rec.get("boxes", []):
+        mapped = resize_center_crop_box(box, original_size, resize_short=256, crop_size=crop_size)
+        if mapped is not None:
+            mapped_boxes.append(mapped)
+    out = dict(rec)
+    out["boxes"] = mapped_boxes
+    out["original_boxes"] = rec.get("boxes", [])
+    return out
 
 
 def union_boxes(boxes: Sequence[Sequence[float]]) -> Optional[List[float]]:
@@ -169,9 +263,84 @@ def load_annotations(
     return grouped
 
 
-def iter_val_images(val_tar: Path, image_names: Sequence[str]) -> Iterable[Tuple[int, str, Image.Image]]:
+def load_filename_to_annotation_mapping(path: str, annotation_val_dir: Path) -> Optional[Dict[str, Path]]:
+    if not path:
+        return None
+    payload = json.loads(Path(path).read_text())
+    items = payload.get("items", payload if isinstance(payload, list) else [])
+    mapping: Dict[str, Path] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        image_name = item.get("image_name")
+        if not isinstance(image_name, str) or not image_name:
+            continue
+        annotation_path = item.get("annotation_path")
+        if isinstance(annotation_path, str) and annotation_path:
+            path_obj = Path(annotation_path)
+            if not path_obj.is_file():
+                path_obj = annotation_val_dir / Path(annotation_path).name
+        else:
+            annotation_file = item.get("annotation_file")
+            if not isinstance(annotation_file, str) or not annotation_file:
+                idx = item.get("annotation_index")
+                if idx is None:
+                    continue
+                annotation_file = f"{int(idx)}.json"
+            path_obj = annotation_val_dir / annotation_file
+        mapping[Path(image_name).name] = path_obj
+    if not mapping:
+        raise RuntimeError(f"no filename-to-annotation entries loaded from {path}")
+    return mapping
+
+
+def load_filename_to_image_mapping(path: str, val_image_root: Optional[Path]) -> Dict[str, Path]:
+    """Load selected-image paths from the mapping JSON or an extracted ImageFolder root.
+
+    This avoids streaming the entire 6GB validation tar just to fetch a handful
+    of curated examples. The mapping JSON already records `image_path` when it
+    was generated from the extracted val folder; otherwise we build a lightweight
+    filename index from `val_image_root`.
+    """
+    mapping: Dict[str, Path] = {}
+    if path:
+        raw = json.loads(Path(path).read_text())
+        items = raw.get("items", raw if isinstance(raw, list) else [])
+        for item in items:
+            image_name = str(item.get("image_name", "")).strip()
+            image_path = str(item.get("image_path", "")).strip()
+            if not image_name or not image_path:
+                continue
+            path_obj = Path(image_path)
+            if path_obj.is_file():
+                mapping[Path(image_name).name] = path_obj
+    if val_image_root and val_image_root.is_dir():
+        for image_path in val_image_root.rglob("*.JPEG"):
+            mapping.setdefault(image_path.name, image_path)
+    return mapping
+
+
+def iter_val_images(
+    val_tar: Path,
+    image_names: Sequence[str],
+    filename_to_image_path: Optional[Dict[str, Path]] = None,
+) -> Iterable[Tuple[int, str, Image.Image]]:
     requested = [name.strip() for name in image_names if name.strip()]
     remaining = set(requested)
+    if filename_to_image_path:
+        for image_name in requested:
+            path = filename_to_image_path.get(Path(image_name).name)
+            if path is None or not path.is_file():
+                continue
+            match = VAL_RE.search(image_name)
+            if match is None:
+                continue
+            with Image.open(path) as image:
+                yield int(match.group(1)), image_name, image.convert("RGB")
+            remaining.discard(image_name)
+        if not remaining:
+            return
+
     with tarfile.open(val_tar, "r|*") as tf:
         for member in tf:
             if not member.isfile():
@@ -303,6 +472,45 @@ class SAVLGRenderer:
         }
 
 
+class SALFRenderer:
+    def __init__(self, load_dir: Path, device: str) -> None:
+        self.load_dir = load_dir.resolve()
+        self.device = device
+        self.concepts = canonicalize_concepts(self.load_dir / "concepts.txt")
+        self.concept_to_idx = {concept: idx for idx, concept in enumerate(self.concepts)}
+        target_model, _ = data_utils.get_target_model("resnet50", device)
+        self.backbone = torch.nn.Sequential(*list(target_model.children())[:-2]).to(device).eval()
+        w_c = torch.load(self.load_dir / "W_c.pt", map_location=device).float()
+        if w_c.ndim == 2:
+            w_c = w_c[:, :, None, None]
+        if w_c.ndim != 4:
+            raise ValueError(f"expected SALF W_c to have 2 or 4 dims, got shape={tuple(w_c.shape)}")
+        self.w_c_conv = w_c
+        self.mean = torch.load(self.load_dir / "proj_mean.pt", map_location=device).float().flatten()
+        self.std = torch.load(self.load_dir / "proj_std.pt", map_location=device).float().flatten().clamp_min(1e-6)
+        self.pool = SoftmaxPooling2D((12, 12)).to(device)
+        self.transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ]
+        )
+
+    def concept_map(self, image_tensor: torch.Tensor, concept_name: str) -> Tuple[torch.Tensor, float]:
+        batch = image_tensor.unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            feats = self.backbone(batch).float()
+            if tuple(feats.shape[-2:]) != (12, 12):
+                feats = F.interpolate(feats, size=(12, 12), mode="bilinear", align_corners=False)
+            maps = F.conv2d(feats, self.w_c_conv)
+            pooled = self.pool(maps).flatten(1).squeeze(0)
+            concept_logits = (pooled - self.mean) / self.std
+        concept_idx = self.concept_to_idx[concept_name]
+        return maps.squeeze(0).float()[concept_idx].detach(), float(concept_logits[concept_idx].item())
+
+
 def select_top_concepts(
     grouped: Dict[str, Dict[str, Any]],
     concept_to_idx: Dict[str, int],
@@ -336,29 +544,53 @@ def render_figure(
     class_label: str,
     image_np: np.ndarray,
     concept_rows: Sequence[Tuple[str, Dict[str, Any], int, float, Dict[str, Any]]],
+    *,
+    paper_clean_labels: bool,
+    savlg_display_name: str,
+    salf_display_name: str,
+    vlg_display_name: str,
+    boxes_on_maps: bool,
 ) -> None:
     rows = len(concept_rows)
-    fig, axes = plt.subplots(rows, 3, figsize=(14, max(3.8 * rows, 4.0)), squeeze=False)
+    fig, axes = plt.subplots(rows, 4, figsize=(18, max(3.8 * rows, 4.0)), squeeze=False)
     for row, (concept, rec, _concept_idx, contribution, model_outputs) in enumerate(concept_rows):
         gt_box = union_boxes(rec["boxes"])
         axes[row, 0].imshow(image_np)
         if gt_box is not None:
             add_box(axes[row, 0], gt_box, "#d62728", "GDINO")
-        axes[row, 0].set_title(f"{image_name}\n{class_label}\n{concept}")
+        if paper_clean_labels:
+            short_class = class_label.split(",")[0].strip()
+            axes[row, 0].set_title(f"Class: {short_class}\nConcept: {concept}", fontsize=11)
+        else:
+            axes[row, 0].set_title(f"{image_name}\n{class_label}\n{concept}")
         axes[row, 0].axis("off")
         axes[row, 1].imshow(model_outputs["savlg_overlay"])
-        if gt_box is not None:
+        if boxes_on_maps and gt_box is not None:
             add_box(axes[row, 1], gt_box, "#d62728", "GDINO")
-        axes[row, 1].set_title(
-            f"SAVLG native\ncontrib={contribution:.2f}, logit={model_outputs['savlg_score']:.2f}",
-            fontsize=10,
-        )
+        if paper_clean_labels:
+            axes[row, 1].set_title(savlg_display_name, fontsize=11)
+        else:
+            axes[row, 1].set_title(
+                f"{savlg_display_name}\ncontrib={contribution:.2f}, logit={model_outputs['savlg_score']:.2f}",
+                fontsize=10,
+            )
         axes[row, 1].axis("off")
-        axes[row, 2].imshow(model_outputs["vlg_overlay"])
-        if gt_box is not None:
+        axes[row, 2].imshow(model_outputs["salf_overlay"])
+        if boxes_on_maps and gt_box is not None:
             add_box(axes[row, 2], gt_box, "#d62728", "GDINO")
-        axes[row, 2].set_title(f"VLG Grad-CAM\nlogit={model_outputs['vlg_score']:.2f}", fontsize=10)
+        if paper_clean_labels:
+            axes[row, 2].set_title(salf_display_name, fontsize=11)
+        else:
+            axes[row, 2].set_title(f"{salf_display_name}\nlogit={model_outputs['salf_score']:.2f}", fontsize=10)
         axes[row, 2].axis("off")
+        axes[row, 3].imshow(model_outputs["vlg_overlay"])
+        if boxes_on_maps and gt_box is not None:
+            add_box(axes[row, 3], gt_box, "#d62728", "GDINO")
+        if paper_clean_labels:
+            axes[row, 3].set_title(vlg_display_name, fontsize=11)
+        else:
+            axes[row, 3].set_title(f"{vlg_display_name}\nlogit={model_outputs['vlg_score']:.2f}", fontsize=10)
+        axes[row, 3].axis("off")
     fig.tight_layout()
     fig.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
@@ -441,12 +673,17 @@ def main() -> None:
 
     annotation_val_dir = resolve_val_annotation_dir(Path(args.annotation_dir).resolve())
     annotation_val_root = Path(args.annotation_val_root).resolve() if args.annotation_val_root else None
-    filename_to_annotation_path = build_filename_to_annotation_path(annotation_val_dir, annotation_val_root)
+    val_image_root = Path(args.val_image_root).resolve() if args.val_image_root else None
+    filename_to_annotation_path = load_filename_to_annotation_mapping(args.annotation_mapping_json, annotation_val_dir)
+    if filename_to_annotation_path is None:
+        filename_to_annotation_path = build_filename_to_annotation_path(annotation_val_dir, annotation_val_root)
+    filename_to_image_path = load_filename_to_image_mapping(args.annotation_mapping_json, val_image_root)
     label_words = load_label_words(Path(args.devkit_dir).resolve())
 
     savlg = SAVLGRenderer(Path(args.savlg_artifact_dir), args.device)
+    salf = SALFRenderer(Path(args.salf_dir), args.device)
     vlg = VLGRenderer(Path(args.vlg_load_dir), args.device)
-    common_concepts = sorted(set(savlg.concepts).intersection(vlg.concepts))
+    common_concepts = sorted(set(savlg.concepts).intersection(salf.concepts).intersection(vlg.concepts))
     concept_manifest = load_concept_manifest(args.concept_manifest_json)
 
     selected = choose_images(args, annotation_val_dir, filename_to_annotation_path, label_words, common_concepts)
@@ -460,13 +697,21 @@ def main() -> None:
         "val_tar": str(Path(args.val_tar).resolve()),
         "devkit_dir": str(Path(args.devkit_dir).resolve()),
         "annotation_dir": str(annotation_val_dir),
+        "val_image_root": str(val_image_root) if val_image_root else "",
+        "annotation_mapping_json": str(Path(args.annotation_mapping_json).resolve()) if args.annotation_mapping_json else "",
         "savlg_artifact_dir": str(Path(args.savlg_artifact_dir).resolve()),
+        "salf_dir": str(Path(args.salf_dir).resolve()),
         "vlg_load_dir": str(Path(args.vlg_load_dir).resolve()),
         "output_dir": str(output_dir),
         "images": [],
     }
 
-    for image_index, image_name, image in iter_val_images(Path(args.val_tar).resolve(), selected_names):
+    for image_index, image_name, image in iter_val_images(
+        Path(args.val_tar).resolve(),
+        selected_names,
+        filename_to_image_path=filename_to_image_path,
+    ):
+        original_size = (int(image.size[0]), int(image.size[1]))
         grouped = load_annotations(
             annotation_val_dir,
             image_index,
@@ -503,6 +748,7 @@ def main() -> None:
         image_np = np.asarray(transforms.Compose([transforms.Resize(256), transforms.CenterCrop(224)])(image)).astype(np.float32) / 255.0
         concept_rows = []
         for concept, rec, concept_idx, contribution in top_rows:
+            display_rec = map_record_to_display_crop(rec, original_size, image_np.shape[0])
             savlg_heat = F.interpolate(
                 savlg_out["spatial_maps"][concept_idx].view(1, 1, *savlg_out["spatial_maps"].shape[-2:]),
                 size=image_np.shape[:2],
@@ -513,16 +759,37 @@ def main() -> None:
             vlg_tensor = vlg.transform(image)
             vlg_cam, vlg_score = vlg.concept_map(vlg_tensor, concept)
             vlg_heat = F.interpolate(vlg_cam.view(1, 1, *vlg_cam.shape[-2:]), size=image_np.shape[:2], mode="bilinear", align_corners=False).squeeze()
+            salf_tensor = salf.transform(image)
+            salf_map, salf_score = salf.concept_map(salf_tensor, concept)
+            salf_heat = F.interpolate(
+                salf_map.view(1, 1, *salf_map.shape[-2:]),
+                size=image_np.shape[:2],
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze()
             model_outputs = {
                 "savlg_overlay": overlay_heatmap(image_np, savlg_display),
                 "savlg_score": float(savlg_out["concept_logits"][concept_idx].item()),
+                "salf_overlay": overlay_heatmap(image_np, normalize_map_with_mode(salf_heat, args.map_normalization)),
+                "salf_score": float(salf_score),
                 "vlg_overlay": overlay_heatmap(image_np, normalize_map(vlg_heat)),
                 "vlg_score": float(vlg_score),
             }
-            concept_rows.append((concept, rec, concept_idx, contribution, model_outputs))
+            concept_rows.append((concept, display_rec, concept_idx, contribution, model_outputs))
 
         output_path = output_dir / f"{Path(image_name).stem}_savlg_vs_vlg.png"
-        render_figure(output_path, image_name, label_lookup.get(image_name, label_words[image_index]), image_np, concept_rows)
+        render_figure(
+            output_path,
+            image_name,
+            label_lookup.get(image_name, label_words[image_index]),
+            image_np,
+            concept_rows,
+            paper_clean_labels=args.paper_clean_labels,
+            savlg_display_name=args.savlg_display_name,
+            salf_display_name=args.salf_display_name,
+            vlg_display_name=args.vlg_display_name,
+            boxes_on_maps=args.boxes_on_maps,
+        )
         summary["images"].append(
             {
                 "image_index": image_index,
@@ -534,6 +801,7 @@ def main() -> None:
                         "concept": concept,
                         "contribution": float(contribution),
                         "savlg_logit": float(model_outputs["savlg_score"]),
+                        "salf_logit": float(model_outputs["salf_score"]),
                         "vlg_logit": float(model_outputs["vlg_score"]),
                         "annotation_logit": float(rec["annotation_logit"]),
                         "boxes": rec["boxes"],
