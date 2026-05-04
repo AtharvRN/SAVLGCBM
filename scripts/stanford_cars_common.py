@@ -164,6 +164,26 @@ def discover_stanford_cars_root(dataset_root: Path) -> Tuple[Path, str]:
     )
 
 
+def _resolve_existing_path(root: Path, candidates: Sequence[str], *, kind: str) -> Path:
+    for candidate in candidates:
+        path = root / candidate
+        if kind == "dir" and path.is_dir():
+            return path
+        if kind == "file" and path.is_file():
+            return path
+    raise FileNotFoundError(f"Could not resolve {kind} under {root} from candidates={list(candidates)}")
+
+
+def _resolve_nested_image_dir(root: Path, base_name: str) -> Path:
+    primary = root / base_name
+    nested = primary / base_name
+    if nested.is_dir():
+        return nested
+    if primary.is_dir():
+        return primary
+    raise FileNotFoundError(f"Could not find image directory for {base_name} under {root}")
+
+
 def _official_test_annotation_path(root: Path) -> Path:
     candidates = [
         root / "cars_test_annos_withlabels.mat",
@@ -171,6 +191,9 @@ def _official_test_annotation_path(root: Path) -> Path:
         root / "devkit" / "cars_test_annos_withlabels.mat",
         root / "devkit" / "cars_test_annoswithlabels.mat",
         root / "devkit" / "cars_test_annos.mat",
+        root / "car_devkit" / "devkit" / "cars_test_annos_withlabels.mat",
+        root / "car_devkit" / "devkit" / "cars_test_annoswithlabels.mat",
+        root / "car_devkit" / "devkit" / "cars_test_annos.mat",
     ]
     for candidate in candidates:
         if candidate.is_file():
@@ -292,16 +315,15 @@ def _load_class_folder_split(split_dir: Path, split: str, class_names: Sequence[
 def load_stanford_cars_records(dataset_root: Path) -> Dict[str, List[Dict[str, Any]]]:
     root, layout = discover_stanford_cars_root(dataset_root)
     if layout == "official_split":
-        meta_path = root / "devkit" / "cars_meta.mat"
-        train_ann_path = root / "devkit" / "cars_train_annos.mat"
-        if not meta_path.is_file():
-            raise FileNotFoundError(f"Missing cars_meta.mat under {root / 'devkit'}")
-        if not train_ann_path.is_file():
-            raise FileNotFoundError(f"Missing cars_train_annos.mat under {root / 'devkit'}")
+        devkit_dir = _resolve_existing_path(root, ["devkit", "car_devkit/devkit"], kind="dir")
+        meta_path = _resolve_existing_path(devkit_dir, ["cars_meta.mat"], kind="file")
+        train_ann_path = _resolve_existing_path(devkit_dir, ["cars_train_annos.mat"], kind="file")
+        train_image_dir = _resolve_nested_image_dir(root, "cars_train")
+        test_image_dir = _resolve_nested_image_dir(root, "cars_test")
         class_names = load_class_names(meta_path)
         return {
-            "train": _load_split_annotations(train_ann_path, root / "cars_train", "train", class_names),
-            "test": _load_split_annotations(_official_test_annotation_path(root), root / "cars_test", "test", class_names),
+            "train": _load_split_annotations(train_ann_path, train_image_dir, "train", class_names),
+            "test": _load_split_annotations(_official_test_annotation_path(root), test_image_dir, "test", class_names),
         }
     if layout == "single_mat":
         rows = _load_single_mat_annotations(root)
